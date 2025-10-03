@@ -1,7 +1,7 @@
 import sqlite3
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import pandas as pd
 import streamlit as st
@@ -12,6 +12,41 @@ from app_review import ROLE_NAMES, import_csv_to_db, update_review
 st.set_page_config(page_title="NMC Applications", layout="wide")
 
 BADGE_PREFIX = "badge__"
+
+
+
+
+def enforce_password(password: Optional[str]) -> None:
+    """Prompt for a password before rendering the rest of the app."""
+    if not password:
+        return
+    if st.session_state.get("_auth_ok"):
+        return
+
+    def _check_password() -> None:
+        entered = st.session_state.get("_password_input", "")
+        if entered == password:
+            st.session_state["_auth_ok"] = True
+            st.session_state.pop("_auth_error", None)
+            st.session_state.pop("_password_input", None)
+        else:
+            st.session_state["_auth_ok"] = False
+            st.session_state["_auth_error"] = "Incorrect password. Try again."
+            st.session_state["_password_input"] = ""
+
+    st.session_state.setdefault("_auth_ok", False)
+    st.title("New Maroon Camp – Application Review")
+    st.text_input(
+        "Password",
+        type="password",
+        key="_password_input",
+        on_change=_check_password,
+    )
+    if st.session_state.get("_auth_ok"):
+        return
+    if st.session_state.get("_auth_error"):
+        st.error(st.session_state["_auth_error"])
+    st.stop()
 
 
 @st.cache_resource
@@ -196,6 +231,7 @@ def render_role_table(df: pd.DataFrame, role: str, cfg: Dict) -> None:
 
 
 cfg = get_cfg()
+enforce_password(cfg.get("auth", {}).get("password"))
 csv_write_target = cfg["csv"].get("write_back_path", cfg["csv"]["path"])
 if "data_version" not in st.session_state:
     st.session_state["data_version"] = 0
@@ -342,9 +378,26 @@ else:
     )
     if selected_id:
         selected_row = df[df[unique_key] == selected_id].iloc[0]
+        rating_raw = selected_row.get(rating_col, "")
+        rating_value = 0.0
+        rating_str = ""
+        if rating_col:
+            if isinstance(rating_raw, (int, float)):
+                if not pd.isna(rating_raw):
+                    rating_value = float(rating_raw)
+                    rating_value = max(0.0, min(5.0, rating_value))
+                    rating_str = f"{rating_value:.1f}"
+            elif isinstance(rating_raw, str) and rating_raw.strip():
+                try:
+                    rating_value = float(rating_raw)
+                    rating_value = max(0.0, min(5.0, rating_value))
+                    rating_str = f"{rating_value:.1f}"
+                except ValueError:
+                    rating_str = rating_raw.strip()
         snapshot = (
             selected_row.get(status_col, ""),
             selected_row.get(notes_col, ""),
+            rating_str,
         )
         if (
             st.session_state.get("active_submission") != selected_id
@@ -353,6 +406,8 @@ else:
             st.session_state["active_submission"] = selected_id
             st.session_state["review_status_value"] = snapshot[0]
             st.session_state["review_notes_value"] = snapshot[1]
+            st.session_state["review_rating_value"] = rating_value if rating_str else 0.0
+            st.session_state["review_rating_str"] = rating_str
             st.session_state["review_snapshot"] = snapshot
 
         info_cols = st.columns([1, 1])
@@ -375,6 +430,46 @@ else:
         with info_cols[1]:
             allowed_statuses = [""] + cfg["review"].get("allowed_statuses", [])
 
+            def current_snapshot():
+                rating_display = st.session_state.get("review_rating_str", "") if rating_col else ""
+                return (
+                    st.session_state.get("review_status_value", ""),
+                    st.session_state.get("review_notes_value", ""),
+                    rating_display,
+                )
+
+            def save_rating() -> None:
+                if not rating_col:
+                    return
+                value = float(st.session_state.get("review_rating_value", 0.0))
+                value = max(0.0, min(5.0, value))
+                updates = {rating_col: f"{value:.1f}"}
+                update_review(
+                    db_path=cfg["database"]["path"],
+                    table=cfg["database"]["table"],
+                    unique_key=unique_key,
+                    keyval=selected_id,
+                    updates=updates,
+                    csv_path=csv_write_target,
+                    skiprows=cfg["csv"].get("skiprows", 0),
+                )
+                st.session_state["review_rating_str"] = f"{value:.1f}"
+                st.session_state["review_snapshot"] = current_snapshot()
+                st.session_state["data_version"] += 1
+                load_dataframe.clear()
+                st.toast("Rating saved", icon="💾")
+
+            if rating_col:
+                st.slider(
+                    "Reviewer score",
+                    min_value=0.0,
+                    max_value=5.0,
+                    step=0.5,
+                    key="review_rating_value",
+                    on_change=save_rating,
+                    help="0 = not ready • 5 = outstanding. Autosaves when you release the slider.",
+                )
+
             def save_status() -> None:
                 value = st.session_state.get("review_status_value", "")
                 updates = {status_col: value}
@@ -387,10 +482,7 @@ else:
                     csv_path=csv_write_target,
                     skiprows=cfg["csv"].get("skiprows", 0),
                 )
-                st.session_state["review_snapshot"] = (
-                    st.session_state.get("review_status_value", ""),
-                    st.session_state.get("review_notes_value", ""),
-                )
+                st.session_state["review_snapshot"] = current_snapshot()
                 st.session_state["data_version"] += 1
                 load_dataframe.clear()
                 st.toast("Status saved", icon="💾")
@@ -407,10 +499,7 @@ else:
                     csv_path=csv_write_target,
                     skiprows=cfg["csv"].get("skiprows", 0),
                 )
-                st.session_state["review_snapshot"] = (
-                    st.session_state.get("review_status_value", ""),
-                    st.session_state.get("review_notes_value", ""),
-                )
+                st.session_state["review_snapshot"] = current_snapshot()
                 st.session_state["data_version"] += 1
                 load_dataframe.clear()
                 st.toast("Notes saved", icon="💾")

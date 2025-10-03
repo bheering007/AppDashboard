@@ -314,9 +314,6 @@ def compute_badges(essays: Iterable[str], cfg: Dict[str, Dict]) -> Dict[str, str
 def prepare_enriched_frame(df: pd.DataFrame, cfg: Dict) -> pd.DataFrame:
     df = df.copy()
     text_fields = cfg.get("fields", {}).get("text_fields", [])
-    rating_field = cfg.get("review", {}).get("rating_field")
-    if rating_field and rating_field not in df.columns:
-        df[rating_field] = ""
     fit_scores = compute_fit(df, cfg)
     df[cfg["review"]["rubric_score_field"]] = [f"{score:.2f}" for score in fit_scores]
     ai_flags: List[str] = []
@@ -383,6 +380,7 @@ def import_csv_to_db(
     for role in ROLE_NAMES:
         extra_cols.extend([f"{role}__fit", f"{role}__pref"])
     extra_cols.extend(badge_cols)
+    extra_cols = list(dict.fromkeys(extra_cols))
     if not Path(db_path).exists():
         init_db(db_path, table, list(enriched_df.columns) + extra_cols, unique_key)
     ensure_columns(db_path, table, list(enriched_df.columns) + extra_cols)
@@ -424,6 +422,7 @@ def merge_with_master_csv(
     csv_path_obj = Path(csv_path)
     if not csv_path_obj.exists():
         return
+    review_fields = list(dict.fromkeys(review_fields))
     # Capture header preamble (lines before header row)
     preamble: List[str] = []
     if skiprows:

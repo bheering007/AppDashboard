@@ -127,3 +127,5 @@ ai_detection:
     - in conclusion
     - furthermore
     - moreover
+auth:
+  password: NMCLegacy2025
