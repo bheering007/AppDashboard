@@ -242,6 +242,25 @@ def filtered_dataframe(
     return filtered
 
 
+
+def reviewer_pending_mask(df: pd.DataFrame, reviewer_cols: List[str]) -> pd.Series:
+    if df.empty:
+        return pd.Series([], dtype=bool, index=df.index)
+    if not reviewer_cols:
+        return pd.Series([False] * len(df), index=df.index, dtype=bool)
+    mask = pd.Series(True, index=df.index, dtype=bool)
+    for col in reviewer_cols:
+        if col not in df.columns:
+            continue
+        series = df[col]
+        if pd.api.types.is_numeric_dtype(series):
+            empty_series = series.isna()
+        else:
+            empty_series = series.fillna("").astype(str).str.strip() == ""
+        mask &= empty_series
+    return mask
+
+
 def format_option_label(row: pd.Series, cfg: Dict) -> str:
     status_col = cfg["review"]["status_field"]
     first_name = row.get("First Name", "")
@@ -313,6 +332,16 @@ def render_role_table(df: pd.DataFrame, role: str, cfg: Dict) -> None:
 cfg = get_cfg()
 current_user, current_profile = login(cfg.get("auth", {}))
 setup_autorefresh(cfg.get("ui", {}).get("auto_refresh_seconds", 0))
+notes_col = cfg["review"]["notes_field"]
+status_col = cfg["review"]["status_field"]
+ai_col = cfg["review"]["ai_flag_field"]
+score_col = cfg["review"]["rubric_score_field"]
+rating_base = cfg["review"].get("rating_field", "review_score")
+recommend_base = cfg["review"].get("recommendation_field", "review_recommendation")
+user_note_col = f"{notes_col}__{current_user}"
+user_rating_col = f"{rating_base}__{current_user}" if rating_base else None
+user_recommend_col = f"{recommend_base}__{current_user}" if recommend_base else None
+reviewer_personal_cols = [col for col in [user_note_col, user_rating_col, user_recommend_col] if col]
 all_reviewers = cfg.get("auth", {}).get("users", {}) or {}
 csv_write_target = cfg["csv"].get("write_back_path", cfg["csv"]["path"])
 if "data_version" not in st.session_state:
@@ -336,6 +365,7 @@ raw_df = load_dataframe(
     db_token,
 )
 df = prepare_dataframe(raw_df, cfg)
+pending_mask_all = reviewer_pending_mask(df, reviewer_personal_cols)
 badge_map = badge_columns(df)
 
 with st.sidebar:
@@ -393,6 +423,11 @@ with st.sidebar:
     )
     role_focus = st.selectbox("Role focus", options=["All"] + ROLE_NAMES)
     role_pref_rule = st.selectbox("Preference filter", options=["Any", "#1 only", "#1 or #2"], index=0)
+    pending_only = st.checkbox(
+        "Only show my pending reviews",
+        key="pending_only_filter",
+        help="Show applications where you have not saved notes, rating, or recommendation yet.",
+    )
 
 if df.empty:
     st.info("No applications in the database yet. Upload your Formstack CSV using the sidebar to get started.")
@@ -410,14 +445,13 @@ filtered_df = filtered_dataframe(
     role_focus=role_focus,
     role_pref_rule=role_pref_rule,
 )
+pending_only_active = st.session_state.get("pending_only_filter", False)
+if pending_only_active and not filtered_df.empty:
+    filtered_df = filtered_df[reviewer_pending_mask(filtered_df, reviewer_personal_cols)]
 
-status_col = cfg["review"]["status_field"]
-notes_col = cfg["review"]["notes_field"]
-ai_col = cfg["review"]["ai_flag_field"]
-score_col = cfg["review"]["rubric_score_field"]
 unique_key = cfg["database"]["unique_key"]
 
-col_metrics = st.columns(4)
+col_metrics = st.columns(5)
 with col_metrics[0]:
     st.metric("Applicants", len(df))
 with col_metrics[1]:
@@ -431,6 +465,8 @@ with col_metrics[3]:
     else:
         gpa_series = pd.Series(dtype=object)
     st.metric("GPA alerts", int((gpa_series == "LOW").sum()))
+with col_metrics[4]:
+    st.metric("My pending reviews", int(pending_mask_all.sum()))
 
 st.caption("Autosave is enabled for review status and notes. Filters affect the table and selection list but not the underlying data.")
 
@@ -482,19 +518,24 @@ else:
     option_labels = {
         row[unique_key]: format_option_label(row, cfg) for _, row in filtered_df.iterrows()
     }
+    options = list(option_labels.keys())
+    default_index = 0
+    active_submission = st.session_state.get("active_submission")
+    if active_submission in options:
+        default_index = options.index(active_submission)
+    elif options:
+        st.session_state["active_submission"] = options[0]
     selected_id = st.selectbox(
         "Choose applicant",
-        options=list(option_labels.keys()),
+        options=options,
+        index=default_index,
         format_func=lambda sid: option_labels.get(sid, str(sid)),
     )
     if selected_id:
         selected_row = df[df[unique_key] == selected_id].iloc[0]
-        user_note_col = f"{notes_col}__{current_user}"
         note_value = selected_row.get(user_note_col, "")
         if pd.isna(note_value):
             note_value = ""
-        rating_base = cfg["review"].get("rating_field", "review_score")
-        user_rating_col = f"{rating_base}__{current_user}" if rating_base else None
         rating_raw = selected_row.get(user_rating_col, "") if user_rating_col else ""
         if pd.isna(rating_raw):
             rating_raw = ""
@@ -510,8 +551,6 @@ else:
                     rating_str = f"{rating_value:.1f}"
                 except ValueError:
                     rating_str = rating_raw.strip()
-        recommend_base = cfg["review"].get("recommendation_field", "review_recommendation")
-        user_recommend_col = f"{recommend_base}__{current_user}" if recommend_base else None
         recommend_raw = selected_row.get(user_recommend_col, "") if user_recommend_col else ""
         if pd.isna(recommend_raw):
             recommend_raw = ""
