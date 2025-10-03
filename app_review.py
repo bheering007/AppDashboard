@@ -501,6 +501,7 @@ def update_review(
 ) -> None:
     if not updates:
         return
+    ensure_columns(db_path, table, updates.keys())
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
     set_clause = ", ".join([f'"{field}"=?' for field in updates.keys()])

@@ -132,3 +132,11 @@ auth:
     legacy:
       password: NMCLegacy2025
       display_name: Legacy Reviewer
+    brice:
+      password: NMCLegacy2025
+      display_name: Brice
+    brandon:
+      password: NMCLegacy2025
+      display_name: ADL Bradon
+
+
