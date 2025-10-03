@@ -16,6 +16,15 @@ BADGE_PREFIX = "badge__"
 
 
 
+def trigger_rerun() -> None:
+    try:
+        st.rerun()
+    except AttributeError:
+        trigger_rerun()
+
+
+
+
 def login(auth_cfg: Dict) -> tuple[str, Dict]:
     users = auth_cfg.get("users", {}) or {}
     if not users:
@@ -37,10 +46,10 @@ def login(auth_cfg: Dict) -> tuple[str, Dict]:
             session["_auth_user"] = username
             session["_auth_display"] = profile.get("display_name", username)
             session.pop("_auth_error", None)
-            st.experimental_rerun()
+            trigger_rerun()
         else:
             session["_auth_error"] = "Invalid username or password."
-            st.experimental_rerun()
+            trigger_rerun()
     if session.get("_auth_error"):
         st.error(session["_auth_error"])
     st.stop()
@@ -54,8 +63,14 @@ def get_cfg() -> Dict:
 
 @st.cache_data(show_spinner=False)
 def load_dataframe(db_path: str, table: str, order_by: str | None, version: int) -> pd.DataFrame:
+    db_file = Path(db_path)
+    if not db_file.exists():
+        return pd.DataFrame()
     with sqlite3.connect(db_path) as conn:
-        df = pd.read_sql_query(f'SELECT * FROM "{table}"', conn)
+        try:
+            df = pd.read_sql_query(f'SELECT * FROM "{table}"', conn)
+        except Exception:
+            return pd.DataFrame()
     if order_by and order_by in df.columns:
         try:
             df[order_by] = pd.to_datetime(df[order_by])
@@ -281,7 +296,7 @@ with st.sidebar:
     if st.button("Log out", key="logout_btn"):
         for key in ["_auth_user", "_auth_display", "data_version", "active_submission", "review_status_value", "review_notes_value", "review_rating_value", "review_rating_str", "review_snapshot", "upload_message", "last_uploaded_token"]:
             st.session_state.pop(key, None)
-        st.experimental_rerun()
+        trigger_rerun()
     st.header("Manage Data")
     upload = st.file_uploader("Add new CSV export", type=["csv"], help="Drop a fresh form export to append/update applicants.")
 
@@ -310,7 +325,7 @@ with st.sidebar:
         st.session_state["upload_message"] = f"Imported {len(enriched)} rows from {file.name}."
         st.session_state["data_version"] += 1
         load_dataframe.clear()
-        st.experimental_rerun()
+        trigger_rerun()
 
     process_upload(upload)
 
@@ -330,6 +345,10 @@ with st.sidebar:
     )
     role_focus = st.selectbox("Role focus", options=["All"] + ROLE_NAMES)
     role_pref_rule = st.selectbox("Preference filter", options=["Any", "#1 only", "#1 or #2"], index=0)
+
+if df.empty:
+    st.info("No applications in the database yet. Upload your Formstack CSV using the sidebar to get started.")
+    st.stop()
 
 filtered_df = filtered_dataframe(
     df=df,
