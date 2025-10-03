@@ -1,0 +1,129 @@
+csv:
+  path: FormSubmissions.csv
+  skiprows: 2
+  write_back: true
+  write_back_path: FormSubmissions.csv
+  incoming_dir: incoming_uploads
+database:
+  path: nmc_apps.sqlite
+  table: applications
+  unique_key: SubmissionId
+  order_by: DateSubmitted
+fields:
+  name_fields:
+  - First Name
+  - Last Name
+  - 'Name:'
+  contact_fields:
+  - 'MSU Email Address (NetId@msstate.edu):'
+  - 'Cell Phone Number:'
+  text_fields:
+  - Why do you want to be part of New Maroon Camp?
+  - What are some ways you plan to support and serve fellow staff members and campers
+    as a part of New Maroon Camp?
+  - What do you think is an important quality of a leader?
+  - What are some ways you hope to personally grow through this experience?
+review:
+  status_field: review_status
+  notes_field: review_notes
+  rubric_score_field: fit_score
+  ai_flag_field: ai_suspect
+  allowed_statuses:
+  - 'yes'
+  - maybe
+  - 'no'
+  rating_field: review_score
+rubric:
+  weights:
+    experience_bonus: 1.0
+    motivation_quality: 2.0
+    availability: 1.0
+    gpa: 0.5
+  thresholds:
+    strong_fit: 3.0
+    maybe: 1.5
+  keywords_positive:
+  - belong
+  - care
+  - community
+  - growth
+  - humble
+  - humbleness
+  - inclusion
+  - intentional
+  - intentionality
+  - kind
+  - kindness
+  - lead
+  - leadership
+  - learn
+  - listen
+  - mentor
+  - servant
+  - servant leadership
+  - serve
+  - support
+  - team
+  - willingness to learn
+  keywords_negative:
+  - resume
+  - clout
+  - status
+  - power
+  gpa_flag_threshold: 3.0
+  keyword_badges:
+    Servant Leadership:
+      keywords:
+      - servant leadership
+      - serve
+      - serving
+      - servant
+      - lead by serving
+    Kindness:
+      keywords:
+      - kind
+      - kindness
+      - compassion
+      - caring
+      - empathy
+    Intentionality:
+      keywords:
+      - intentional
+      - intentionality
+      - intentional about
+      - purposeful
+      - purpose
+    Humbleness:
+      keywords:
+      - humble
+      - humility
+      - humbleness
+    Willingness To Learn:
+      keywords:
+      - willingness to learn
+      - willing to learn
+      - learn
+      - learning
+      - growth
+      - grow
+    Leadership Skills:
+      keywords:
+      - leader
+      - leadership
+      - leading
+      - mentor
+      - guide
+ai_detection:
+  use_heuristics: true
+  flags_on:
+    low_lexical_diversity: 0.42
+    low_personal_pronouns: 0.02
+    high_stopword_ratio: 0.72
+    low_punctuation_variety: 0.04
+    template_phrases:
+    - as an ai
+    - as a language model
+    - as a dedicated and passionate individual
+    - in conclusion
+    - furthermore
+    - moreover
