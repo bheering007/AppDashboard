@@ -1,0 +1,29 @@
+auth:
+  users:
+    legacy:
+      password: NMCLegacy2025
+      display_name: Legacy Reviewer
+    brice:
+      password: NMCLegacy2025
+      display_name: CT Brice
+    ella:
+      password: NMCLegacy2025
+      display_name: CT Ella
+    brandon:
+      password: NMCLegacy2025
+      display_name: ADL Brandon
+    mary grace:
+      password: NMCLegacy2025
+      display_name: Maddam Director
+    matthew:
+      password: NMCLegacy2025
+      display_name: Sassy Matthew
+    cailee:
+      password: NMCLegacy2025
+      display_name: ADC Cailee
+    riley:
+      password: NMCLegacy2025
+      display_name: RILEEEEEEY
+    john caleb:
+      password: NMCLegacy2025
+      display_name: Jumbo Churro

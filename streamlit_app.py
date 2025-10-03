@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 import yaml
 
-from app_review import ROLE_NAMES, import_csv_to_db, update_review
+from app_review import ROLE_NAMES, import_csv_to_db, update_review, fetch_audit_log
 
 st.set_page_config(page_title="NMC Applications", layout="wide")
 
@@ -15,13 +15,30 @@ BADGE_PREFIX = "badge__"
 
 
 
+def setup_autorefresh(seconds: float | int) -> None:
+    if not seconds or seconds <= 0:
+        return
+    refresh_fn = getattr(st, "autorefresh", None)
+    interval_ms = int(seconds * 1000)
+    if callable(refresh_fn):
+        refresh_fn(interval=interval_ms, limit=None, key="auto_refresh_timer")
+    else:
+        st.markdown(
+            f"<script>setTimeout(function(){{window.location.reload();}},{interval_ms});</script>",
+            unsafe_allow_html=True,
+        )
+
 
 def trigger_rerun() -> None:
-    try:
-        st.rerun()
-    except AttributeError:
-        trigger_rerun()
-
+    rerun = getattr(st, "rerun", None)
+    if callable(rerun):
+        rerun()
+        return
+    experimental = getattr(st, "experimental_rerun", None)
+    if callable(experimental):
+        experimental()
+    else:
+        raise RuntimeError("Streamlit rerun API not available")
 
 
 
@@ -62,7 +79,13 @@ def get_cfg() -> Dict:
 
 
 @st.cache_data(show_spinner=False)
-def load_dataframe(db_path: str, table: str, order_by: str | None, version: int) -> pd.DataFrame:
+def load_dataframe(
+    db_path: str,
+    table: str,
+    order_by: str | None,
+    session_version: int,
+    storage_token: float,
+) -> pd.DataFrame:
     db_file = Path(db_path)
     if not db_file.exists():
         return pd.DataFrame()
@@ -120,6 +143,11 @@ def prepare_dataframe(df: pd.DataFrame, cfg: Dict) -> pd.DataFrame:
     note_cols = [col for col in df.columns if col.startswith(f"{notes_col}__")]
     for col in [notes_col] + note_cols:
         if col in df.columns:
+            df[col] = df[col].fillna("")
+    recommend_base = cfg["review"].get("recommendation_field", "review_recommendation")
+    if recommend_base:
+        recommend_cols = [col for col in df.columns if col.startswith(f"{recommend_base}__")]
+        for col in recommend_cols:
             df[col] = df[col].fillna("")
     return df
 
@@ -187,11 +215,12 @@ def filtered_dataframe(
     if role_focus != "All":
         pref_col = f"{role_focus}__pref"
         if pref_col in filtered.columns:
-            filtered = filtered[filtered[pref_col].fillna("") != ""]
+            normalized = filtered[pref_col].astype(str).str.strip().str.lower()
+            filtered = filtered[~normalized.isin({"", "nan", "none", "null"})]
             if role_pref_rule == "#1 only":
-                filtered = filtered[filtered[pref_col] == "1"]
+                filtered = filtered[normalized == "1"]
             elif role_pref_rule == "#1 or #2":
-                filtered = filtered[filtered[pref_col].isin(["1", "2"])]
+                filtered = filtered[normalized.isin({"1", "2"})]
         else:
             filtered = filtered.iloc[0:0]
     sort_cols = []
@@ -242,6 +271,7 @@ def render_badges(row: pd.Series, badge_map: Dict[str, str]) -> None:
 def render_role_table(df: pd.DataFrame, role: str, cfg: Dict) -> None:
     score_col = cfg["review"]["rubric_score_field"]
     status_col = cfg["review"]["status_field"]
+    recommend_base = cfg["review"].get("recommendation_field", "review_recommendation")
     display_cols = [
         cfg["database"]["unique_key"],
         "First Name",
@@ -261,7 +291,8 @@ def render_role_table(df: pd.DataFrame, role: str, cfg: Dict) -> None:
     data = df.copy()
     pref_col = f"{role}__pref"
     if pref_col in data.columns:
-        data = data[data[pref_col].fillna("") != ""]
+        normalized = data[pref_col].astype(str).str.strip().str.lower()
+        data = data[~normalized.isin({"", "nan", "none", "null"})]
     if data.empty:
         st.info("No applicants ranked this role yet.")
         return
@@ -269,10 +300,19 @@ def render_role_table(df: pd.DataFrame, role: str, cfg: Dict) -> None:
         data["_role_fit_numeric"] = pd.to_numeric(data[f"{role}__fit"], errors="coerce")
         data.sort_values("_role_fit_numeric", ascending=False, inplace=True, ignore_index=True)
     st.dataframe(data[display_cols], use_container_width=True, hide_index=True)
+    if not data.empty:
+        csv_export = data[display_cols].to_csv(index=False).encode("utf-8")
+        st.download_button(
+            f"Download {role} shortlist",
+            data=csv_export,
+            file_name=f"{role.lower().replace(' ', '_')}_shortlist.csv",
+            mime="text/csv",
+        )
 
 
 cfg = get_cfg()
 current_user, current_profile = login(cfg.get("auth", {}))
+setup_autorefresh(cfg.get("ui", {}).get("auto_refresh_seconds", 0))
 all_reviewers = cfg.get("auth", {}).get("users", {}) or {}
 csv_write_target = cfg["csv"].get("write_back_path", cfg["csv"]["path"])
 if "data_version" not in st.session_state:
@@ -286,7 +326,15 @@ if st.session_state.get("upload_message"):
     st.toast(st.session_state.pop("upload_message"), icon="✅")
 
 order_by = cfg.get("database", {}).get("order_by", "DateSubmitted")
-raw_df = load_dataframe(cfg["database"]["path"], cfg["database"]["table"], order_by, st.session_state["data_version"])
+db_file = Path(cfg["database"]["path"])
+db_token = db_file.stat().st_mtime if db_file.exists() else 0.0
+raw_df = load_dataframe(
+    cfg["database"]["path"],
+    cfg["database"]["table"],
+    order_by,
+    st.session_state["data_version"],
+    db_token,
+)
 df = prepare_dataframe(raw_df, cfg)
 badge_map = badge_columns(df)
 
@@ -419,6 +467,13 @@ else:
         use_container_width=True,
         hide_index=True,
     )
+    download_ready = filtered_df[selected_table_cols].to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "Download filtered CSV",
+        data=download_ready,
+        file_name="nmc_filtered.csv",
+        mime="text/csv",
+    )
 
 st.subheader("Review Panel")
 if filtered_df.empty:
@@ -455,10 +510,17 @@ else:
                     rating_str = f"{rating_value:.1f}"
                 except ValueError:
                     rating_str = rating_raw.strip()
+        recommend_base = cfg["review"].get("recommendation_field", "review_recommendation")
+        user_recommend_col = f"{recommend_base}__{current_user}" if recommend_base else None
+        recommend_raw = selected_row.get(user_recommend_col, "") if user_recommend_col else ""
+        if pd.isna(recommend_raw):
+            recommend_raw = ""
+        recommend_value = str(recommend_raw).strip().lower() if recommend_raw else ""
         snapshot = (
             selected_row.get(status_col, ""),
             note_value,
             rating_str,
+            recommend_value,
         )
         if (
             st.session_state.get("active_submission") != selected_id
@@ -469,6 +531,7 @@ else:
             st.session_state["review_notes_value"] = snapshot[1]
             st.session_state["review_rating_value"] = rating_value if rating_str else 0.0
             st.session_state["review_rating_str"] = rating_str
+            st.session_state["review_recommend_value"] = recommend_value
             st.session_state["review_snapshot"] = snapshot
 
         info_cols = st.columns([1, 1])
@@ -493,10 +556,12 @@ else:
 
             def current_snapshot():
                 rating_display = st.session_state.get("review_rating_str", "") if rating_base else ""
+                recommend_display = st.session_state.get("review_recommend_value", "") if user_recommend_col else ""
                 return (
                     st.session_state.get("review_status_value", ""),
                     st.session_state.get("review_notes_value", ""),
                     rating_display,
+                    recommend_display,
                 )
 
             def save_rating() -> None:
@@ -513,6 +578,7 @@ else:
                     updates=updates,
                     csv_path=csv_write_target,
                     skiprows=cfg["csv"].get("skiprows", 0),
+                    actor=current_user,
                 )
                 st.session_state["review_rating_str"] = f"{value:.1f}"
                 st.session_state["review_snapshot"] = current_snapshot()
@@ -531,6 +597,42 @@ else:
                     help="0 = not ready • 5 = outstanding. Autosaves when you release the slider.",
                 )
 
+            if user_recommend_col:
+                def save_recommendation() -> None:
+                    value = st.session_state.get("review_recommend_value", "")
+                    if isinstance(value, str):
+                        value = value.lower().strip()
+                    updates = {user_recommend_col: value}
+                    update_review(
+                        db_path=cfg["database"]["path"],
+                        table=cfg["database"]["table"],
+                        unique_key=unique_key,
+                        keyval=selected_id,
+                        updates=updates,
+                        csv_path=csv_write_target,
+                        skiprows=cfg["csv"].get("skiprows", 0),
+                        actor=current_user,
+                    )
+                    st.session_state["review_snapshot"] = current_snapshot()
+                    st.session_state["data_version"] += 1
+                    load_dataframe.clear()
+                    st.toast("Recommendation saved", icon="💾")
+
+                rec_options = ["", "yes", "maybe", "no"]
+                current_value = st.session_state.get("review_recommend_value", "")
+                if current_value not in rec_options:
+                    current_value = ""
+                    st.session_state["review_recommend_value"] = current_value
+                st.selectbox(
+                    "My recommendation",
+                    options=rec_options,
+                    index=rec_options.index(current_value),
+                    key="review_recommend_value",
+                    on_change=save_recommendation,
+                    format_func=lambda val: val.title() if val else "(none)",
+                    help="Share your personal yes/maybe/no recommendation. Autosaves on change.",
+                )
+
             def save_status() -> None:
                 value = st.session_state.get("review_status_value", "")
                 updates = {status_col: value}
@@ -542,6 +644,7 @@ else:
                     updates=updates,
                     csv_path=csv_write_target,
                     skiprows=cfg["csv"].get("skiprows", 0),
+                    actor=current_user,
                 )
                 st.session_state["review_snapshot"] = current_snapshot()
                 st.session_state["data_version"] += 1
@@ -559,6 +662,7 @@ else:
                     updates=updates,
                     csv_path=csv_write_target,
                     skiprows=cfg["csv"].get("skiprows", 0),
+                    actor=current_user,
                 )
                 st.session_state["review_snapshot"] = current_snapshot()
                 st.session_state["data_version"] += 1
@@ -590,18 +694,24 @@ else:
         for reviewer, profile in all_reviewers.items():
             note_col = f"{notes_col}__{reviewer}"
             rating_col_user = f"{rating_base}__{reviewer}" if rating_base else None
+            recommend_col_user = f"{recommend_base}__{reviewer}" if recommend_base else None
             note_text = selected_row.get(note_col, "")
             rating_text = selected_row.get(rating_col_user, "") if rating_col_user else ""
+            recommend_text = selected_row.get(recommend_col_user, "") if recommend_col_user else ""
             if pd.isna(note_text):
                 note_text = ""
             if pd.isna(rating_text):
                 rating_text = ""
+            if pd.isna(recommend_text):
+                recommend_text = ""
             display = profile.get("display_name", reviewer)
             with st.expander(display, expanded=(reviewer == current_user)):
                 if rating_col_user and rating_text:
                     st.write(f"Rating: {rating_text}")
                 elif rating_col_user:
                     st.caption("No rating yet.")
+                if recommend_col_user:
+                    st.write(f"Recommendation: {recommend_text.title()}" if recommend_text else "Recommendation: (none)")
                 if note_text:
                     st.write(note_text)
                 else:
@@ -615,6 +725,73 @@ else:
                     st.write(answer)
                 else:
                     st.caption("No response provided.")
+
+st.subheader("Potential Conflicts")
+analytics_cfg = cfg.get("analytics", {})
+rating_threshold = analytics_cfg.get("conflict_rating_threshold", 2.0) or 0
+recommend_conflicts_enabled = analytics_cfg.get("conflict_recommendation", True)
+conflict_mask = pd.Series(False, index=df.index)
+max_gap = pd.Series(0.0, index=df.index)
+recommend_summary = pd.Series('', index=df.index)
+if rating_base and rating_threshold and rating_threshold > 0:
+    rating_cols = [col for col in df.columns if col.startswith(f"{rating_base}__")]
+    if rating_cols:
+        numeric = df[rating_cols].apply(pd.to_numeric, errors='coerce')
+        max_gap = (numeric.max(axis=1) - numeric.min(axis=1)).fillna(0.0)
+        conflict_mask = conflict_mask | (max_gap > rating_threshold)
+if recommend_conflicts_enabled:
+    recommend_base = cfg["review"].get("recommendation_field", "review_recommendation")
+    if recommend_base:
+        recommend_cols = [col for col in df.columns if col.startswith(f"{recommend_base}__")]
+        if recommend_cols:
+            def _rec_mix(row):
+                vals = {
+                    str(row[col]).strip().lower()
+                    for col in recommend_cols
+                    if isinstance(row[col], str) and str(row[col]).strip()
+                }
+                return ', '.join(sorted(vals)) if vals else ''
+            recommend_summary = df.apply(_rec_mix, axis=1)
+            rec_conflict = recommend_summary.apply(lambda v: 'yes' in v.split(', ') and 'no' in v.split(', '))
+            conflict_mask = conflict_mask | rec_conflict
+conflict_df = df[conflict_mask].copy()
+if not conflict_df.empty:
+    conflict_df['_rating_gap'] = max_gap[conflict_mask]
+    conflict_df['_recommendation_mix'] = recommend_summary[conflict_mask]
+    conflict_view_cols = [
+        unique_key,
+        'First Name',
+        'Last Name',
+        score_col,
+        '_rating_gap',
+        '_recommendation_mix',
+        status_col,
+    ]
+    conflict_view_cols = [col for col in conflict_view_cols if col in conflict_df.columns]
+    st.dataframe(conflict_df[conflict_view_cols], use_container_width=True, hide_index=True)
+else:
+    st.caption('No rating or recommendation conflicts detected.')
+
+st.subheader("Analytics")
+status_counts = df[status_col].value_counts(dropna=False)
+if not status_counts.empty:
+    st.bar_chart(status_counts)
+else:
+    st.caption('No status data yet.')
+if rating_avg_col and rating_avg_col in df.columns:
+    avg_series = pd.to_numeric(df[rating_avg_col], errors='coerce')
+    st.metric('Average reviewer rating', f"{avg_series.dropna().mean():.2f}" if not avg_series.dropna().empty else '—')
+role_pref_summary = {}
+for role in ROLE_NAMES:
+    pref_col = f"{role}__pref"
+    if pref_col in df.columns:
+        top_choice = (df[pref_col].astype(str).str.strip() == '1').sum()
+        role_pref_summary[role] = int(top_choice)
+if role_pref_summary:
+    st.write('Top-choice interest by role:')
+    st.bar_chart(pd.Series(role_pref_summary))
+else:
+    st.caption('No role preference data yet.')
 
 st.subheader("Role Shortlists")
 role_tabs = st.tabs(["All"] + ROLE_NAMES)
@@ -642,3 +819,10 @@ with role_tabs[0]:
 for idx, role in enumerate(ROLE_NAMES, start=1):
     with role_tabs[idx]:
         render_role_table(df, role, cfg)
+
+st.subheader("Activity Log")
+audit_df = fetch_audit_log(cfg["database"]["path"], limit=200)
+if audit_df.empty:
+    st.caption("No review activity recorded yet.")
+else:
+    st.dataframe(audit_df, use_container_width=True, hide_index=True)

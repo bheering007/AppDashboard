@@ -33,6 +33,7 @@ review:
   - maybe
   - 'no'
   rating_field: review_score
+  recommendation_field: review_recommendation
 rubric:
   weights:
     experience_bonus: 1.0
@@ -134,9 +135,30 @@ auth:
       display_name: Legacy Reviewer
     brice:
       password: NMCLegacy2025
-      display_name: Brice
+      display_name: CT Brice
+    ella:
+      password: NMCLegacy2025
+      display_name: CT Ella
     brandon:
       password: NMCLegacy2025
-      display_name: ADL Bradon
-
-
+      display_name: ADL Brandon
+    mary grace:
+      password: NMCLegacy2025
+      display_name: Madam Director
+    matthew:
+      password: NMCLegacy2025
+      display_name: Sassy Matthew
+    cailee:
+      password: NMCLegacy2025
+      display_name: ADC Cailee
+    riley:
+      password: NMCLegacy2025
+      display_name: RILEEEEEEY
+    john caleb:
+      password: NMCLegacy2025
+      display_name: Jumbo Churro
+ui:
+  auto_refresh_seconds: 8
+analytics:
+  conflict_rating_threshold: 2.0
+  conflict_recommendation: true

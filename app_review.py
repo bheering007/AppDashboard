@@ -15,7 +15,7 @@ import pandas as pd
 # Configuration helpers
 # ---------------------------------------------------------------------------
 
-ROLE_NAMES: List[str] = ["Counselor", "Buddy Staff", "Programming Staff", "Accessibility Staff"]
+ROLE_NAMES: List[str] = ["Counselor", "Buddy Staff", "Programming Staff"]
 
 DEFAULT_BADGE_THRESHOLDS = {
     "yes": 2,
@@ -321,6 +321,9 @@ def prepare_enriched_frame(df: pd.DataFrame, cfg: Dict) -> pd.DataFrame:
     reviewers = get_reviewer_profiles(cfg)
     notes_base = cfg["review"]["notes_field"]
     rating_base = cfg["review"].get("rating_field")
+    recommend_base = cfg["review"].get("recommendation_field")
+    if recommend_base and recommend_base not in df.columns:
+        df[recommend_base] = ""
     for username in reviewers.keys():
         note_col = f"{notes_base}__{username}"
         if note_col not in df.columns:
@@ -329,6 +332,10 @@ def prepare_enriched_frame(df: pd.DataFrame, cfg: Dict) -> pd.DataFrame:
             rating_col = f"{rating_base}__{username}"
             if rating_col not in df.columns:
                 df[rating_col] = ""
+        if recommend_base:
+            recommend_col = f"{recommend_base}__{username}"
+            if recommend_col not in df.columns:
+                df[recommend_col] = ""
     fit_scores = compute_fit(df, cfg)
     df[cfg["review"]["rubric_score_field"]] = [f"{score:.2f}" for score in fit_scores]
     ai_flags: List[str] = []
@@ -387,6 +394,7 @@ def import_csv_to_db(
         cfg["review"]["rubric_score_field"],
         cfg["review"]["ai_flag_field"],
         cfg["review"].get("rating_field", "review_score"),
+        cfg["review"].get("recommendation_field", "review_recommendation"),
         "ai_score",
         "summary",
         "gpa_flag",
@@ -395,12 +403,15 @@ def import_csv_to_db(
     reviewers = get_reviewer_profiles(cfg)
     notes_base = cfg["review"]["notes_field"]
     rating_base = cfg["review"].get("rating_field")
+    recommend_base = cfg["review"].get("recommendation_field")
     for role in ROLE_NAMES:
         extra_cols.extend([f"{role}__fit", f"{role}__pref"])
     for username in reviewers.keys():
         extra_cols.append(f"{notes_base}__{username}")
         if rating_base:
             extra_cols.append(f"{rating_base}__{username}")
+        if recommend_base:
+            extra_cols.append(f"{recommend_base}__{username}")
     extra_cols.extend(badge_cols)
     extra_cols = list(dict.fromkeys(extra_cols))
     if not Path(db_path).exists():
@@ -423,6 +434,7 @@ def import_csv_to_db(
                 cfg["review"]["rubric_score_field"],
                 cfg["review"]["ai_flag_field"],
                 cfg["review"].get("rating_field", "review_score"),
+                cfg["review"].get("recommendation_field", "review_recommendation"),
                 "ai_score",
                 "summary",
                 "gpa_flag",
@@ -431,7 +443,8 @@ def import_csv_to_db(
             + [f"{role}__fit" for role in ROLE_NAMES]
             + [f"{role}__pref" for role in ROLE_NAMES]
             + [f"{notes_base}__{username}" for username in reviewers.keys()]
-            + ([f"{rating_base}__{username}" for username in reviewers.keys()] if rating_base else []),
+            + ([f"{rating_base}__{username}" for username in reviewers.keys()] if rating_base else [])
+            + ([f"{recommend_base}__{username}" for username in reviewers.keys()] if recommend_base else []),
         )
     return enriched_df
 
@@ -498,12 +511,17 @@ def update_review(
     updates: Dict[str, Optional[str]],
     csv_path: Optional[str] = None,
     skiprows: int = 0,
+    actor: Optional[str] = None,
 ) -> None:
     if not updates:
         return
     ensure_columns(db_path, table, updates.keys())
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
+    if actor:
+        cur.execute(
+            'CREATE TABLE IF NOT EXISTS "review_audit" (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT, actor TEXT, submission_id TEXT, field TEXT, value TEXT)'
+        )
     set_clause = ", ".join([f'"{field}"=?' for field in updates.keys()])
     values = [_normalize_value(value) for value in updates.values()]
     values.append(keyval)
@@ -511,6 +529,15 @@ def update_review(
         f'UPDATE "{table}" SET {set_clause} WHERE "{unique_key}"=?',
         values,
     )
+    if actor:
+        from datetime import datetime as _dt
+
+        ts = _dt.utcnow().isoformat()
+        for field, value in updates.items():
+            cur.execute(
+                'INSERT INTO "review_audit" (timestamp, actor, submission_id, field, value) VALUES (?,?,?,?,?)',
+                (ts, actor, keyval, field, _normalize_value(value)),
+            )
     conn.commit()
     conn.close()
     if csv_path:
@@ -558,6 +585,18 @@ def sync_single_row_to_csv(
                 handle.write(f"{line}\n")
         df.to_csv(handle, index=False)
     temp_path.replace(csv_path_obj)
+
+
+
+def fetch_audit_log(db_path: str, limit: int = 200) -> pd.DataFrame:
+    db_file = Path(db_path)
+    if not db_file.exists():
+        return pd.DataFrame(columns=["timestamp", "actor", "submission_id", "field", "value"])
+    with sqlite3.connect(db_path) as conn:
+        conn.execute('CREATE TABLE IF NOT EXISTS "review_audit" (id INTEGER PRIMARY KEY AUTOINCREMENT, timestamp TEXT, actor TEXT, submission_id TEXT, field TEXT, value TEXT)')
+        query = 'SELECT timestamp, actor, submission_id, field, value FROM "review_audit" ORDER BY id DESC LIMIT ?'
+        df = pd.read_sql_query(query, conn, params=(limit,))
+    return df
 
 
 # ---------------------------------------------------------------------------
