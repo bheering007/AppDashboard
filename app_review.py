@@ -56,11 +56,12 @@ def init_db(db_path: str, table: str, columns: Iterable[str], unique_key: str) -
 
 
 def ensure_columns(db_path: str, table: str, columns: Iterable[str]) -> None:
+    unique_columns = list(dict.fromkeys(columns))
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
     cur.execute(f'PRAGMA table_info("{table}")')
     existing = {row[1] for row in cur.fetchall()}
-    to_add = [col for col in columns if col not in existing]
+    to_add = [col for col in unique_columns if col not in existing]
     for col in to_add:
         cur.execute(f'ALTER TABLE "{table}" ADD COLUMN "{col}" TEXT')
     if to_add:
