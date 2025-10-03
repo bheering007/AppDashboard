@@ -23,6 +23,10 @@ DEFAULT_BADGE_THRESHOLDS = {
 }
 
 
+
+def get_reviewer_profiles(cfg: Dict) -> Dict[str, Dict]:
+    return cfg.get("auth", {}).get("users", {}) or {}
+
 def slugify(value: str) -> str:
     value = value.strip().lower()
     value = re.sub(r"[^a-z0-9]+", "_", value)
@@ -314,6 +318,17 @@ def compute_badges(essays: Iterable[str], cfg: Dict[str, Dict]) -> Dict[str, str
 def prepare_enriched_frame(df: pd.DataFrame, cfg: Dict) -> pd.DataFrame:
     df = df.copy()
     text_fields = cfg.get("fields", {}).get("text_fields", [])
+    reviewers = get_reviewer_profiles(cfg)
+    notes_base = cfg["review"]["notes_field"]
+    rating_base = cfg["review"].get("rating_field")
+    for username in reviewers.keys():
+        note_col = f"{notes_base}__{username}"
+        if note_col not in df.columns:
+            df[note_col] = ""
+        if rating_base:
+            rating_col = f"{rating_base}__{username}"
+            if rating_col not in df.columns:
+                df[rating_col] = ""
     fit_scores = compute_fit(df, cfg)
     df[cfg["review"]["rubric_score_field"]] = [f"{score:.2f}" for score in fit_scores]
     ai_flags: List[str] = []
@@ -377,8 +392,15 @@ def import_csv_to_db(
         "gpa_flag",
     ]
     badge_cols = [col for col in enriched_df.columns if col.startswith("badge__")]
+    reviewers = get_reviewer_profiles(cfg)
+    notes_base = cfg["review"]["notes_field"]
+    rating_base = cfg["review"].get("rating_field")
     for role in ROLE_NAMES:
         extra_cols.extend([f"{role}__fit", f"{role}__pref"])
+    for username in reviewers.keys():
+        extra_cols.append(f"{notes_base}__{username}")
+        if rating_base:
+            extra_cols.append(f"{rating_base}__{username}")
     extra_cols.extend(badge_cols)
     extra_cols = list(dict.fromkeys(extra_cols))
     if not Path(db_path).exists():
@@ -407,7 +429,9 @@ def import_csv_to_db(
             ]
             + badge_cols
             + [f"{role}__fit" for role in ROLE_NAMES]
-            + [f"{role}__pref" for role in ROLE_NAMES],
+            + [f"{role}__pref" for role in ROLE_NAMES]
+            + [f"{notes_base}__{username}" for username in reviewers.keys()]
+            + ([f"{rating_base}__{username}" for username in reviewers.keys()] if rating_base else []),
         )
     return enriched_df
 

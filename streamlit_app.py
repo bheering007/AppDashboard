@@ -1,7 +1,7 @@
 import sqlite3
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 import pandas as pd
 import streamlit as st
@@ -16,36 +16,33 @@ BADGE_PREFIX = "badge__"
 
 
 
-def enforce_password(password: Optional[str]) -> None:
-    """Prompt for a password before rendering the rest of the app."""
-    if not password:
-        return
-    if st.session_state.get("_auth_ok"):
-        return
+def login(auth_cfg: Dict) -> tuple[str, Dict]:
+    users = auth_cfg.get("users", {}) or {}
+    if not users:
+        return "guest", {}
 
-    def _check_password() -> None:
-        entered = st.session_state.get("_password_input", "")
-        if entered == password:
-            st.session_state["_auth_ok"] = True
-            st.session_state.pop("_auth_error", None)
-            st.session_state.pop("_password_input", None)
-        else:
-            st.session_state["_auth_ok"] = False
-            st.session_state["_auth_error"] = "Incorrect password. Try again."
-            st.session_state["_password_input"] = ""
+    session = st.session_state
+    saved_user = session.get("_auth_user")
+    if saved_user and saved_user in users:
+        return saved_user, users[saved_user]
 
-    st.session_state.setdefault("_auth_ok", False)
     st.title("New Maroon Camp – Application Review")
-    st.text_input(
-        "Password",
-        type="password",
-        key="_password_input",
-        on_change=_check_password,
-    )
-    if st.session_state.get("_auth_ok"):
-        return
-    if st.session_state.get("_auth_error"):
-        st.error(st.session_state["_auth_error"])
+    with st.form("login_form", clear_on_submit=False):
+        username = st.text_input("Username").strip()
+        password = st.text_input("Password", type="password")
+        submit = st.form_submit_button("Log in")
+    if submit:
+        profile = users.get(username)
+        if profile and password == profile.get("password"):
+            session["_auth_user"] = username
+            session["_auth_display"] = profile.get("display_name", username)
+            session.pop("_auth_error", None)
+            st.experimental_rerun()
+        else:
+            session["_auth_error"] = "Invalid username or password."
+            st.experimental_rerun()
+    if session.get("_auth_error"):
+        st.error(session["_auth_error"])
     st.stop()
 
 
@@ -79,15 +76,36 @@ def prepare_dataframe(df: pd.DataFrame, cfg: Dict) -> pd.DataFrame:
     ai_score_col = "ai_score"
     if ai_score_col in df.columns:
         df["_ai_numeric"] = pd.to_numeric(df[ai_score_col], errors="coerce")
-    rating_col = cfg["review"].get("rating_field", "review_score")
-    if rating_col in df.columns:
-        df["_review_rating_numeric"] = pd.to_numeric(df[rating_col], errors="coerce")
+    rating_base = cfg["review"].get("rating_field", "review_score")
+    rating_cols = []
+    if rating_base:
+        rating_cols = [col for col in df.columns if col.startswith(f"{rating_base}__")]
+        if rating_cols:
+            avg_col = f"{rating_base}_avg"
+
+            def _avg_rating(row):
+                values = []
+                for col in rating_cols:
+                    val = row.get(col, "")
+                    if pd.isna(val) or val == "":
+                        continue
+                    try:
+                        numeric = float(val)
+                    except (TypeError, ValueError):
+                        continue
+                    values.append(max(0.0, min(5.0, numeric)))
+                return round(sum(values) / len(values), 1) if values else None
+
+            df[avg_col] = df[rating_cols].apply(_avg_rating, axis=1)
+            df["_rating_avg_numeric"] = pd.to_numeric(df[avg_col], errors="coerce")
     status_col = cfg["review"]["status_field"]
     if status_col in df.columns:
         df[status_col] = df[status_col].fillna("")
     notes_col = cfg["review"]["notes_field"]
-    if notes_col in df.columns:
-        df[notes_col] = df[notes_col].fillna("")
+    note_cols = [col for col in df.columns if col.startswith(f"{notes_col}__")]
+    for col in [notes_col] + note_cols:
+        if col in df.columns:
+            df[col] = df[col].fillna("")
     return df
 
 
@@ -116,10 +134,13 @@ def filtered_dataframe(
     status_col = cfg["review"]["status_field"]
     notes_col = cfg["review"]["notes_field"]
     ai_col = cfg["review"]["ai_flag_field"]
+    note_prefix = cfg["review"]["notes_field"]
+    note_search_cols = [col for col in df.columns if col.startswith(f"{note_prefix}__")]
     search_cols = set(
         cfg.get("fields", {}).get("name_fields", [])
         + cfg.get("fields", {}).get("contact_fields", [])
         + [notes_col, "summary"]
+        + note_search_cols
     )
     filtered = df.copy()
     if search_text:
@@ -162,6 +183,11 @@ def filtered_dataframe(
     sort_orders = []
     if '_fit_numeric' in filtered.columns:
         sort_cols.append('_fit_numeric')
+        sort_orders.append(False)
+    rating_base = cfg["review"].get("rating_field", "review_score")
+    rating_avg_col = f"{rating_base}_avg" if rating_base else None
+    if rating_avg_col and rating_avg_col in filtered.columns:
+        sort_cols.append(rating_avg_col)
         sort_orders.append(False)
     if ai_col in filtered.columns:
         sort_cols.append(ai_col)
@@ -231,7 +257,8 @@ def render_role_table(df: pd.DataFrame, role: str, cfg: Dict) -> None:
 
 
 cfg = get_cfg()
-enforce_password(cfg.get("auth", {}).get("password"))
+current_user, current_profile = login(cfg.get("auth", {}))
+all_reviewers = cfg.get("auth", {}).get("users", {}) or {}
 csv_write_target = cfg["csv"].get("write_back_path", cfg["csv"]["path"])
 if "data_version" not in st.session_state:
     st.session_state["data_version"] = 0
@@ -249,6 +276,12 @@ df = prepare_dataframe(raw_df, cfg)
 badge_map = badge_columns(df)
 
 with st.sidebar:
+    display_name = st.session_state.get("_auth_display", current_profile.get("display_name", current_user))
+    st.markdown(f"**Logged in as:** {display_name}")
+    if st.button("Log out", key="logout_btn"):
+        for key in ["_auth_user", "_auth_display", "data_version", "active_submission", "review_status_value", "review_notes_value", "review_rating_value", "review_rating_str", "review_snapshot", "upload_message", "last_uploaded_token"]:
+            st.session_state.pop(key, None)
+        st.experimental_rerun()
     st.header("Manage Data")
     upload = st.file_uploader("Add new CSV export", type=["csv"], help="Drop a fresh form export to append/update applicants.")
 
@@ -334,21 +367,25 @@ with col_metrics[3]:
 
 st.caption("Autosave is enabled for review status and notes. Filters affect the table and selection list but not the underlying data.")
 
-rating_col = cfg["review"].get("rating_field", "review_score")
+rating_base = cfg["review"].get("rating_field", "review_score")
+rating_avg_col = f"{rating_base}_avg" if rating_base else None
 default_table_cols = [
     unique_key,
     "First Name",
     "Last Name",
     *(cfg.get("fields", {}).get("contact_fields", [])[:1]),
     score_col,
-    rating_col,
+]
+if rating_avg_col:
+    default_table_cols.append(rating_avg_col)
+default_table_cols.extend([
     ai_col,
     "ai_score",
     "gpa_flag",
     status_col,
     notes_col,
     "summary",
-]
+])
 available_cols = [col for col in default_table_cols if col in filtered_df.columns]
 selected_table_cols = st.multiselect(
     "Table columns",
@@ -378,25 +415,30 @@ else:
     )
     if selected_id:
         selected_row = df[df[unique_key] == selected_id].iloc[0]
-        rating_raw = selected_row.get(rating_col, "")
+        user_note_col = f"{notes_col}__{current_user}"
+        note_value = selected_row.get(user_note_col, "")
+        if pd.isna(note_value):
+            note_value = ""
+        rating_base = cfg["review"].get("rating_field", "review_score")
+        user_rating_col = f"{rating_base}__{current_user}" if rating_base else None
+        rating_raw = selected_row.get(user_rating_col, "") if user_rating_col else ""
+        if pd.isna(rating_raw):
+            rating_raw = ""
         rating_value = 0.0
         rating_str = ""
-        if rating_col:
-            if isinstance(rating_raw, (int, float)):
-                if not pd.isna(rating_raw):
-                    rating_value = float(rating_raw)
-                    rating_value = max(0.0, min(5.0, rating_value))
-                    rating_str = f"{rating_value:.1f}"
+        if user_rating_col:
+            if isinstance(rating_raw, (int, float)) and not pd.isna(rating_raw):
+                rating_value = max(0.0, min(5.0, float(rating_raw)))
+                rating_str = f"{rating_value:.1f}"
             elif isinstance(rating_raw, str) and rating_raw.strip():
                 try:
-                    rating_value = float(rating_raw)
-                    rating_value = max(0.0, min(5.0, rating_value))
+                    rating_value = max(0.0, min(5.0, float(rating_raw)))
                     rating_str = f"{rating_value:.1f}"
                 except ValueError:
                     rating_str = rating_raw.strip()
         snapshot = (
             selected_row.get(status_col, ""),
-            selected_row.get(notes_col, ""),
+            note_value,
             rating_str,
         )
         if (
@@ -431,7 +473,7 @@ else:
             allowed_statuses = [""] + cfg["review"].get("allowed_statuses", [])
 
             def current_snapshot():
-                rating_display = st.session_state.get("review_rating_str", "") if rating_col else ""
+                rating_display = st.session_state.get("review_rating_str", "") if rating_base else ""
                 return (
                     st.session_state.get("review_status_value", ""),
                     st.session_state.get("review_notes_value", ""),
@@ -439,11 +481,11 @@ else:
                 )
 
             def save_rating() -> None:
-                if not rating_col:
+                if not user_rating_col:
                     return
                 value = float(st.session_state.get("review_rating_value", 0.0))
                 value = max(0.0, min(5.0, value))
-                updates = {rating_col: f"{value:.1f}"}
+                updates = {user_rating_col: f"{value:.1f}"}
                 update_review(
                     db_path=cfg["database"]["path"],
                     table=cfg["database"]["table"],
@@ -459,9 +501,9 @@ else:
                 load_dataframe.clear()
                 st.toast("Rating saved", icon="💾")
 
-            if rating_col:
+            if user_rating_col:
                 st.slider(
-                    "Reviewer score",
+                    "My reviewer score",
                     min_value=0.0,
                     max_value=5.0,
                     step=0.5,
@@ -489,7 +531,7 @@ else:
 
             def save_notes() -> None:
                 value = st.session_state.get("review_notes_value", "")
-                updates = {notes_col: value}
+                updates = {user_note_col: value}
                 update_review(
                     db_path=cfg["database"]["path"],
                     table=cfg["database"]["table"],
@@ -515,12 +557,36 @@ else:
                 help="Pick yes/maybe/no. Changes auto-save.",
             )
             st.text_area(
-                "Notes",
+                "My notes",
                 key="review_notes_value",
                 on_change=save_notes,
                 height=180,
                 help="Free-form notes. Saving happens when you click outside the field.",
             )
+        st.markdown("**Reviewer notes & ratings**")
+        shared_note = selected_row.get(notes_col, "")
+        if shared_note:
+            st.caption("Shared note")
+            st.write(shared_note)
+        for reviewer, profile in all_reviewers.items():
+            note_col = f"{notes_col}__{reviewer}"
+            rating_col_user = f"{rating_base}__{reviewer}" if rating_base else None
+            note_text = selected_row.get(note_col, "")
+            rating_text = selected_row.get(rating_col_user, "") if rating_col_user else ""
+            if pd.isna(note_text):
+                note_text = ""
+            if pd.isna(rating_text):
+                rating_text = ""
+            display = profile.get("display_name", reviewer)
+            with st.expander(display, expanded=(reviewer == current_user)):
+                if rating_col_user and rating_text:
+                    st.write(f"Rating: {rating_text}")
+                elif rating_col_user:
+                    st.caption("No rating yet.")
+                if note_text:
+                    st.write(note_text)
+                else:
+                    st.caption("No notes yet.")
         st.divider()
         st.subheader("Responses")
         for question in cfg.get("fields", {}).get("text_fields", []):

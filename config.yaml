@@ -128,4 +128,7 @@ ai_detection:
     - furthermore
     - moreover
 auth:
-  password: NMCLegacy2025
+  users:
+    legacy:
+      password: NMCLegacy2025
+      display_name: Legacy Reviewer
