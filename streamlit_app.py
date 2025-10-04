@@ -434,7 +434,7 @@ with st.sidebar:
 
     st.divider()
     with st.expander("Filter applicants", expanded=False):
-        search_col, status_col = st.columns([2, 1])
+        search_col, status_col_ui = st.columns([2, 1])
         with search_col:
             search_text = st.text_input(
                 "Search name/email/notes",
@@ -445,7 +445,7 @@ with st.sidebar:
                 key="pending_only_filter",
                 help="Show applications where you have not saved notes, rating, or recommendation yet.",
             )
-        with status_col:
+        with status_col_ui:
             status_filter = st.multiselect(
                 "Review status",
                 options=cfg["review"].get("allowed_statuses", ["yes", "maybe", "no"]),
