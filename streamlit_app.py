@@ -944,7 +944,7 @@ else:
                         index=recommendation_options.index(current_recommend),
                         key="review_recommend_value",
                         on_change=save_recommendation,
-                        format_func=lambda val: val.title() if val else "(none)",
+                        format_func=lambda val: str(val).title() if str(val).strip() else "(none)",
                     )
             with review_cols[1]:
                 current_status = st.session_state.get("review_status_value", "")
@@ -957,7 +957,7 @@ else:
                     index=allowed_statuses.index(current_status),
                     key="review_status_value",
                     on_change=save_status,
-                    format_func=lambda val: val.title() if val else "(pending)",
+                    format_func=lambda val: str(val).title() if str(val).strip() else "(pending)",
                     help="Pick yes/maybe/no. Changes auto-save.",
                 )
             st.text_area(
@@ -1025,7 +1025,7 @@ else:
                         index=outcome_options.index(current_outcome),
                         key="interview_outcome_value",
                         on_change=save_interview_outcome,
-                        format_func=lambda val: val.title() if val else "(undecided)",
+                        format_func=lambda val: str(val).title() if str(val).strip() else "(undecided)",
                     )
                 st.text_area(
                     "Resource notes / links",
@@ -1068,14 +1068,17 @@ else:
                         if current_value not in question_status_options:
                             current_value = ""
                             st.session_state[state_key] = current_value
-                        st.selectbox(
-                            item.get("question"),
-                            options=question_status_options,
-                            index=question_status_options.index(current_value),
-                            key=state_key,
-                            on_change=make_interview_question_saver(slug, column_name),
-                            format_func=lambda val: question_status_labels.get(val, val.title() if val else "(pending)"),
-                        )
+                st.selectbox(
+                    item.get("question"),
+                    options=question_status_options,
+                    index=question_status_options.index(current_value),
+                    key=state_key,
+                    on_change=make_interview_question_saver(slug, column_name),
+                    format_func=lambda val: question_status_labels.get(
+                        val,
+                        str(val).title() if str(val).strip() else "(pending)",
+                    ),
+                )
 
         with feedback_tab:
             shared_note = str(display_row.get(notes_col, "") or "").strip()
