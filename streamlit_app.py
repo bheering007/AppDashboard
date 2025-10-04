@@ -448,6 +448,7 @@ rating_base = cfg["review"].get("rating_field", "review_score")
 recommend_base = cfg["review"].get("recommendation_field", "review_recommendation")
 assignment_field = cfg["review"].get("assignment_field", "role_assignment")
 family_field = cfg["review"].get("family_field", "family_group")
+family_pair_field = cfg["review"].get("family_pair_field", "family_pod")
 family_cfg = cfg.get("family", {}) or {}
 raw_family_names = family_cfg.get("names") or []
 family_names = [str(name).strip() for name in raw_family_names if str(name).strip()]
