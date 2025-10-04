@@ -124,8 +124,9 @@ interview:
   outcome_options:
     - strong yes
     - yes
-    - hold
+    - maybe
     - no
+    - strong no
   summary_template:
     - "Strengths: "
     - "Growth areas: "

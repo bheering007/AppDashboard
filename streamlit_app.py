@@ -1069,6 +1069,9 @@ else:
 
         with my_review_tab:
             st.caption("Updates save automatically when you interact with the controls.")
+            pending_template = st.session_state.pop("pending_notes_template", None)
+            if pending_template is not None:
+                st.session_state["review_notes_value"] = pending_template
             review_cols = st.columns(2)
             with review_cols[0]:
                 if user_rating_col:
@@ -1140,9 +1143,9 @@ else:
                     if st.button("Insert summary template", key="insert_summary_template"):
                         template_text = "\n".join(interview_summary_template)
                         st.session_state["interview_summary_value"] = template_text
-                        st.session_state["review_notes_value"] = template_text
-                        st.session_state["review_snapshot"] = current_snapshot()
                         st.toast("Template added to notes", icon="📝")
+                        st.session_state["pending_notes_template"] = template_text
+                        trigger_rerun()
                 st.text_area(
                     "Interview summary",
                     key="interview_summary_value",
