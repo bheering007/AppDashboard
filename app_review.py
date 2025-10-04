@@ -360,48 +360,57 @@ def extract_gpa_flag(row: pd.Series, threshold: float) -> str:
     return "LOW" if gpa_value < threshold else ""
 
 
-def infer_role_preference(row: pd.Series, role: str) -> Optional[int]:
-    role_lower = role.lower()
-    target_words = {"please rank", "rank", "preference", "preferred"}
-    cols = [
-        col
-        for col in row.index
-        if role_lower in col.lower() and any(token in col.lower() for token in target_words)
-    ]
+def infer_role_preference(row: pd.Series, role: str, cfg: Dict) -> Optional[int]:
+    role_lower = role.lower().strip()
+    rank_config = cfg.get("fields", {}).get("role_rank_columns", {}) or {}
 
-    def contains_rank(value: str, target: int) -> bool:
-        if not value:
-            return False
-        stripped = value.lower().strip()
-        if stripped in {"nan", "n/a", "", "none"}:
-            return False
-        if stripped.isdigit():
-            return int(stripped) == target
-        # look for standalone digits, # or ordinal text
-        if str(target) in stripped.split():
-            return True
-        if f"#{target}" in stripped or f"no.{target}" in stripped:
-            return True
-        if stripped.endswith(str(target)):
-            return True
-        ordinal = {
-            1: {"1st", "first"},
-            2: {"2nd", "second"},
-            3: {"3rd", "third"},
-        }
-        for token in ordinal.get(target, set()):
-            if token in stripped:
-                return True
-        return False
+    def normalize(value: str) -> str:
+        return str(value or "").strip().lower()
 
-    if not cols:
-        return None
+    # Config-driven mappings take precedence.
+    mapping = rank_config.get(role) or rank_config.get(role_lower)
+    if isinstance(mapping, dict):
+        for rank_key, col_name in mapping.items():
+            try:
+                rank = int(rank_key)
+            except (TypeError, ValueError):
+                continue
+            value = normalize(row.get(col_name, ""))
+            if value == role_lower:
+                return rank
+    elif isinstance(mapping, (list, tuple)):
+        for idx, col_name in enumerate(mapping, start=1):
+            value = normalize(row.get(col_name, ""))
+            if value == role_lower:
+                return idx
 
-    for target in (1, 2, 3):
-        for col in cols:
-            value = str(row.get(col, ""))
-            if contains_rank(value, target):
-                return target
+    # Fallback: detect generic ranking columns and match values.
+    rank_columns: list[tuple[str, int]] = []
+    for col in row.index:
+        lower = col.lower()
+        if "please rank" in lower and role_lower in lower:
+            if lower.rstrip().endswith("- 1"):
+                rank_columns.append((col, 1))
+            elif lower.rstrip().endswith("- 2"):
+                rank_columns.append((col, 2))
+            elif lower.rstrip().endswith("- 3"):
+                rank_columns.append((col, 3))
+            else:
+                rank_columns.append((col, 0))
+        elif "please rank" in lower and any(marker in lower for marker in {"- 1", "- 2", "- 3"}):
+            # Column includes rank but not explicit role name; match by value.
+            if lower.rstrip().endswith("- 1"):
+                rank_columns.append((col, 1))
+            elif lower.rstrip().endswith("- 2"):
+                rank_columns.append((col, 2))
+            elif lower.rstrip().endswith("- 3"):
+                rank_columns.append((col, 3))
+
+    for col, rank in rank_columns:
+        value = normalize(row.get(col, ""))
+        if value == role_lower and rank > 0:
+            return rank
+
     return None
 
 
@@ -480,7 +489,7 @@ def prepare_enriched_frame(df: pd.DataFrame, cfg: Dict) -> pd.DataFrame:
         for key, value in badges.items():
             badges_store.setdefault(key, []).append(value)
         for role in ROLE_NAMES:
-            pref = infer_role_preference(row, role)
+            pref = infer_role_preference(row, role, cfg)
             df.at[idx, f"{role}__pref"] = "" if pref is None else str(pref)
             df.at[idx, f"{role}__fit"] = f"{compute_role_fit(fit_scores[offset], pref):.2f}"
     df[cfg["review"]["ai_flag_field"]] = ai_flags
