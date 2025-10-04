@@ -715,8 +715,14 @@ def format_family_badge(family_value: str) -> str:
     symbol = family_badge_map.get(value, "▪️")
     return f"{symbol} {value}"
 
-filtered_df["Role tag"] = filtered_df.get(assignment_field, "").apply(format_role_badge)
-filtered_df["Family tag"] = filtered_df.get(family_field, "").apply(format_family_badge)
+if assignment_field in filtered_df.columns:
+    filtered_df["Role tag"] = filtered_df[assignment_field].apply(format_role_badge)
+else:
+    filtered_df["Role tag"] = "—"
+if family_field in filtered_df.columns:
+    filtered_df["Family tag"] = filtered_df[family_field].apply(format_family_badge)
+else:
+    filtered_df["Family tag"] = "—"
 
 review_tab, staffing_tab = st.tabs(["Review Dashboard", "Staffing Boards"])
 
