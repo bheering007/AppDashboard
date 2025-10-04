@@ -433,26 +433,38 @@ with st.sidebar:
     process_upload(upload)
 
     st.divider()
-    st.header("Filter")
-    search_text = st.text_input("Search name/email/notes")
-    status_filter = st.multiselect(
-        "Review status",
-        options=cfg["review"].get("allowed_statuses", ["yes", "maybe", "no"]),
-        help="Filter by your decisions. Leave empty to show all."
-    )
-    ai_filter = st.selectbox("AI flag", options=["All", "Flagged", "Not flagged"], index=0)
-    gpa_only = st.checkbox("Only show GPA flag (<3.0)", value=False)
-    min_fit = st.slider("Minimum fit score", -2.0, 6.0, 0.0, 0.1)
-    selected_badges = st.multiselect(
-        "Must include badges", options=list(badge_map.keys()), format_func=lambda key: badge_map[key]
-    )
-    role_focus = st.selectbox("Role focus", options=["All"] + ROLE_NAMES)
-    role_pref_rule = st.selectbox("Preference filter", options=["Any", "#1 only", "#1 or #2"], index=0)
-    pending_only = st.checkbox(
-        "Only show my pending reviews",
-        key="pending_only_filter",
-        help="Show applications where you have not saved notes, rating, or recommendation yet.",
-    )
+    with st.expander("Filter applicants", expanded=False):
+        search_col, status_col = st.columns([2, 1])
+        with search_col:
+            search_text = st.text_input(
+                "Search name/email/notes",
+                help="Matches across names, contact info, shared notes, and your comments.",
+            )
+            pending_only = st.checkbox(
+                "Only show my pending reviews",
+                key="pending_only_filter",
+                help="Show applications where you have not saved notes, rating, or recommendation yet.",
+            )
+        with status_col:
+            status_filter = st.multiselect(
+                "Review status",
+                options=cfg["review"].get("allowed_statuses", ["yes", "maybe", "no"]),
+                help="Leave empty to include every decision.",
+            )
+            ai_filter = st.selectbox("AI flag", options=["All", "Flagged", "Not flagged"], index=0)
+        score_cols = st.columns(2)
+        with score_cols[0]:
+            gpa_only = st.checkbox("Only show GPA flag (<3.0)", value=False)
+            min_fit = st.slider("Minimum fit score", -2.0, 6.0, 0.0, 0.1)
+        with score_cols[1]:
+            role_focus = st.selectbox("Role focus", options=["All"] + ROLE_NAMES)
+            role_pref_rule = st.selectbox("Preference filter", options=["Any", "#1 only", "#1 or #2"], index=0)
+        badge_label = "Must include badges" if badge_map else "Badges"
+        selected_badges = st.multiselect(
+            badge_label,
+            options=list(badge_map.keys()),
+            format_func=lambda key: badge_map[key],
+        )
 
 if df.empty:
     st.info("No applications in the database yet. Upload your Formstack CSV using the sidebar to get started.")
@@ -515,26 +527,27 @@ default_table_cols.extend([
     "summary",
 ])
 available_cols = [col for col in default_table_cols if col in filtered_df.columns]
-selected_table_cols = st.multiselect(
-    "Table columns",
-    options=list(filtered_df.columns),
-    default=available_cols,
-)
-if not selected_table_cols:
-    st.warning("Select at least one column to display.")
-else:
-    st.dataframe(
-        filtered_df[selected_table_cols],
-        use_container_width=True,
-        hide_index=True,
+with st.expander("Applicant table", expanded=True):
+    selected_table_cols = st.multiselect(
+        "Columns to show",
+        options=list(filtered_df.columns),
+        default=available_cols,
     )
-    download_ready = filtered_df[selected_table_cols].to_csv(index=False).encode("utf-8")
-    st.download_button(
-        "Download filtered CSV",
-        data=download_ready,
-        file_name="nmc_filtered.csv",
-        mime="text/csv",
-    )
+    if not selected_table_cols:
+        st.warning("Select at least one column to display.")
+    else:
+        st.dataframe(
+            filtered_df[selected_table_cols],
+            use_container_width=True,
+            hide_index=True,
+        )
+        download_ready = filtered_df[selected_table_cols].to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "Download filtered CSV",
+            data=download_ready,
+            file_name="nmc_filtered.csv",
+            mime="text/csv",
+        )
 
 st.subheader("Review Panel")
 if filtered_df.empty:
@@ -676,202 +689,287 @@ else:
                     st.session_state[f"interview_question_{slug}_value"] = value
             st.session_state["review_snapshot"] = snapshot
 
-        info_cols = st.columns([1, 1])
-        with info_cols[0]:
-            st.write("**Name**", f"{selected_row.get('First Name', '')} {selected_row.get('Last Name', '')}")
-            for contact in cfg.get("fields", {}).get("contact_fields", []):
-                if contact in selected_row:
-                    st.write(f"**{contact}**", selected_row.get(contact, ""))
-            st.write("**Fit score**", selected_row.get(score_col, ""))
-            st.write(
-                "**AI suspect**",
-                f"{selected_row.get(ai_col, '')} ({selected_row.get('ai_score', '')})",
+        allowed_statuses = [""] + cfg["review"].get("allowed_statuses", [])
+        question_status_options = ["", "asked", "needs follow-up"]
+        question_status_labels = {
+            "": "(pending)",
+            "asked": "Asked",
+            "needs follow-up": "Needs follow-up",
+        }
+
+        def current_snapshot():
+            rating_display = st.session_state.get("review_rating_str", "") if user_rating_col else ""
+            recommend_display = st.session_state.get("review_recommend_value", "") if user_recommend_col else ""
+            prompt_snapshot_state = tuple(
+                st.session_state.get(f"interview_prompt_{item['slug']}_value", "") for item in interview_prompts
             )
-            gpa_flag = selected_row.get("gpa_flag", "")
-            if gpa_flag:
-                st.error("GPA flagged below threshold", icon="⚠️")
-            allowed_statuses = [""] + cfg["review"].get("allowed_statuses", [])
-            question_status_options = ["", "asked", "needs follow-up"]
-            question_status_labels = {
-                "": "(pending)",
-                "asked": "Asked",
-                "needs follow-up": "Needs follow-up",
-            }
+            interview_rating_state = (
+                st.session_state.get("interview_rating_display", "")
+                if user_interview_rating_col
+                else ""
+            )
+            interview_outcome_state = (
+                st.session_state.get("interview_outcome_value", "")
+                if user_interview_outcome_col
+                else ""
+            )
+            interview_log_state = st.session_state.get("interview_log_value", "")
+            interview_resources_state = st.session_state.get("interview_resources_value", "")
+            interview_summary_state = st.session_state.get("interview_summary_value", "")
+            question_snapshot_state = tuple(
+                st.session_state.get(f"interview_question_{item['slug']}_value", "") for item in interview_questions
+            )
+            return (
+                st.session_state.get("review_status_value", ""),
+                st.session_state.get("review_notes_value", ""),
+                rating_display,
+                recommend_display,
+                prompt_snapshot_state,
+                interview_rating_state,
+                interview_outcome_state,
+                interview_log_state,
+                interview_resources_state,
+                interview_summary_state,
+                question_snapshot_state,
+            )
 
-            def current_snapshot():
-                rating_display = st.session_state.get("review_rating_str", "") if user_rating_col else ""
-                recommend_display = st.session_state.get("review_recommend_value", "") if user_recommend_col else ""
-                prompt_snapshot_state = tuple(
-                    st.session_state.get(f"interview_prompt_{item['slug']}_value", "") for item in interview_prompts
-                )
-                interview_rating_state = st.session_state.get("interview_rating_display", "") if user_interview_rating_col else ""
-                interview_outcome_state = st.session_state.get("interview_outcome_value", "") if user_interview_outcome_col else ""
-                interview_log_state = st.session_state.get("interview_log_value", "")
-                interview_resources_state = st.session_state.get("interview_resources_value", "")
-                interview_summary_state = st.session_state.get("interview_summary_value", "")
-                question_snapshot_state = tuple(
-                    st.session_state.get(f"interview_question_{item['slug']}_value", "") for item in interview_questions
-                )
-                return (
-                    st.session_state.get("review_status_value", ""),
-                    st.session_state.get("review_notes_value", ""),
-                    rating_display,
-                    recommend_display,
-                    prompt_snapshot_state,
-                    interview_rating_state,
-                    interview_outcome_state,
-                    interview_log_state,
-                    interview_resources_state,
-                    interview_summary_state,
-                    question_snapshot_state,
-                )
+        def persist_updates(updates, toast_message: str) -> None:
+            if not updates:
+                return
+            csv_write_enabled = cfg["csv"].get("write_back", True)
+            update_review(
+                db_path=cfg["database"]["path"],
+                table=cfg["database"]["table"],
+                unique_key=unique_key,
+                keyval=selected_id,
+                updates=updates,
+                csv_path=csv_write_target if csv_write_enabled else None,
+                skiprows=cfg["csv"].get("skiprows", 0),
+                actor=current_user,
+            )
+            st.session_state["review_snapshot"] = current_snapshot()
+            st.session_state["data_version"] += 1
+            load_dataframe.clear()
+            if toast_message:
+                st.toast(toast_message, icon="💾")
 
-            def persist_updates(updates, toast_message: str) -> None:
-                if not updates:
-                    return
-                update_review(
-                    db_path=cfg["database"]["path"],
-                    table=cfg["database"]["table"],
-                    unique_key=unique_key,
-                    keyval=selected_id,
-                    updates=updates,
-                    csv_path=csv_write_target,
-                    skiprows=cfg["csv"].get("skiprows", 0),
-                    actor=current_user,
-                )
-                st.session_state["review_snapshot"] = current_snapshot()
-                st.session_state["data_version"] += 1
-                load_dataframe.clear()
-                if toast_message:
-                    st.toast(toast_message, icon="💾")
+        def save_rating() -> None:
+            if not user_rating_col:
+                return
+            value = float(st.session_state.get("review_rating_value", 0.0))
+            value = max(0.0, min(5.0, value))
+            formatted = f"{value:.1f}"
+            st.session_state["review_rating_str"] = formatted
+            persist_updates({user_rating_col: formatted}, "Rating saved")
 
-            def save_rating() -> None:
-                value = float(st.session_state.get("review_rating_value", 0.0))
-                value = max(0.0, min(5.0, value))
-                formatted = f"{value:.1f}"
-                st.session_state["review_rating_str"] = formatted
-                persist_updates({user_rating_col: formatted}, "Rating saved")
+        def save_recommendation() -> None:
+            if not user_recommend_col:
+                return
+            value = st.session_state.get("review_recommend_value", "")
+            if isinstance(value, str):
+                value = value.lower().strip()
+            persist_updates({user_recommend_col: value}, "Recommendation saved")
 
-            if user_rating_col:
-                st.slider(
-                    "My reviewer score",
-                    min_value=0.0,
-                    max_value=5.0,
-                    step=0.5,
-                    key="review_rating_value",
-                    on_change=save_rating,
-                    help="0 = not ready / 5 = outstanding. Autosaves when you release the slider.",
-                )
+        def save_status() -> None:
+            value = st.session_state.get("review_status_value", "")
+            persist_updates({status_col: value}, "Status saved")
 
-            if user_recommend_col:
-                def save_recommendation() -> None:
-                    value = st.session_state.get("review_recommend_value", "")
-                    if isinstance(value, str):
-                        value = value.lower().strip()
-                    persist_updates({user_recommend_col: value}, "Recommendation saved")
+        def save_notes() -> None:
+            value = st.session_state.get("review_notes_value", "")
+            persist_updates({user_note_col: value}, "Notes saved")
 
-                rec_options = ["", "yes", "maybe", "no"]
-                current_value = st.session_state.get("review_recommend_value", "")
-                if current_value not in rec_options:
-                    current_value = ""
-                    st.session_state["review_recommend_value"] = current_value
+        def save_interview_rating() -> None:
+            if not user_interview_rating_col:
+                return
+            value = float(st.session_state.get("interview_rating_value", 0.0))
+            value = max(0.0, min(5.0, value))
+            formatted = f"{value:.1f}"
+            st.session_state["interview_rating_display"] = formatted
+            persist_updates({user_interview_rating_col: formatted}, "Interview rating saved")
+
+        def save_interview_outcome() -> None:
+            if not user_interview_outcome_col:
+                return
+            value = st.session_state.get("interview_outcome_value", "")
+            persist_updates({user_interview_outcome_col: value}, "Interview outcome saved")
+
+        def save_interview_resources() -> None:
+            if not user_interview_resources_col:
+                return
+            value = st.session_state.get("interview_resources_value", "")
+            persist_updates({user_interview_resources_col: value}, "Resource notes saved")
+
+        def save_interview_summary() -> None:
+            if not user_interview_summary_col:
+                return
+            value = st.session_state.get("interview_summary_value", "")
+            persist_updates({user_interview_summary_col: value}, "Interview summary saved")
+
+        def make_interview_prompt_saver(slug: str, column: str, label: str):
+            state_key = f"interview_prompt_{slug}_value"
+
+            def _save() -> None:
+                persist_updates({column: st.session_state.get(state_key, "")}, f"{label} saved")
+
+            return _save
+
+        def make_interview_question_saver(slug: str, column: str):
+            state_key = f"interview_question_{slug}_value"
+
+            def _save() -> None:
+                persist_updates({column: st.session_state.get(state_key, "")}, "Question status saved")
+
+            return _save
+
+        def append_interview_log() -> None:
+            if not user_interview_log_col:
+                return
+            entry = st.session_state.get("interview_log_entry", "").strip()
+            if not entry:
+                return
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+            existing = st.session_state.get("interview_log_value", "").strip()
+            new_log = f"[{timestamp}] {entry}" if not existing else f"{existing}\n[{timestamp}] {entry}"
+            st.session_state["interview_log_value"] = new_log
+            st.session_state["interview_log_entry"] = ""
+            persist_updates({user_interview_log_col: new_log}, "Interview log updated")
+
+        if "interview_log_entry" not in st.session_state:
+            st.session_state["interview_log_entry"] = ""
+
+        display_row = selected_row.copy()
+        display_row[user_note_col] = st.session_state.get("review_notes_value", display_row.get(user_note_col, ""))
+        if user_rating_col:
+            display_row[user_rating_col] = st.session_state.get("review_rating_str", display_row.get(user_rating_col, ""))
+        if user_recommend_col:
+            display_row[user_recommend_col] = st.session_state.get("review_recommend_value", display_row.get(user_recommend_col, ""))
+        if user_interview_summary_col:
+            display_row[user_interview_summary_col] = st.session_state.get("interview_summary_value", display_row.get(user_interview_summary_col, ""))
+        if user_interview_rating_col:
+            display_row[user_interview_rating_col] = st.session_state.get("interview_rating_display", display_row.get(user_interview_rating_col, ""))
+        if user_interview_outcome_col:
+            display_row[user_interview_outcome_col] = st.session_state.get("interview_outcome_value", display_row.get(user_interview_outcome_col, ""))
+        if user_interview_log_col:
+            display_row[user_interview_log_col] = st.session_state.get("interview_log_value", display_row.get(user_interview_log_col, ""))
+        if user_interview_resources_col:
+            display_row[user_interview_resources_col] = st.session_state.get("interview_resources_value", display_row.get(user_interview_resources_col, ""))
+        for slug, column_name in interview_prompt_cols.items():
+            if not column_name:
+                continue
+            state_key = f"interview_prompt_{slug}_value"
+            if state_key in st.session_state:
+                display_row[column_name] = st.session_state[state_key]
+        for slug, column_name in interview_question_cols.items():
+            if not column_name:
+                continue
+            state_key = f"interview_question_{slug}_value"
+            if state_key in st.session_state:
+                display_row[column_name] = st.session_state[state_key]
+
+        overview_tab, my_review_tab, interview_tab, feedback_tab = st.tabs([
+            "Overview",
+            "My Review",
+            "Interview",
+            "Feedback",
+        ])
+
+        with overview_tab:
+            first_name = str(display_row.get("First Name", "") or "").strip()
+            last_name = str(display_row.get("Last Name", "") or "").strip()
+            name_heading = " ".join(filter(None, [first_name, last_name])) or option_labels.get(selected_id, str(selected_id))
+            st.markdown(f"### {name_heading}")
+            top_cols = st.columns([2, 1])
+            with top_cols[0]:
+                st.write("**Submission ID**", selected_id)
+                for contact_field in cfg.get("fields", {}).get("contact_fields", []):
+                    if contact_field in display_row:
+                        st.write(f"**{contact_field}**", display_row.get(contact_field, ""))
+            with top_cols[1]:
+                st.write("**Decision status**", st.session_state.get("review_status_value", "") or "(pending)")
+                if user_rating_col:
+                    rating_display = st.session_state.get("review_rating_str", "")
+                    st.write("**My rating**", rating_display or "—")
+                if user_recommend_col:
+                    rec_display = st.session_state.get("review_recommend_value", "")
+                    st.write("**My recommendation**", rec_display.title() if rec_display else "(none)")
+                ai_flag_value = display_row.get(ai_col, "")
+                ai_score_val = display_row.get("ai_score", "—")
+                st.write("**AI suspect**", f"{ai_flag_value} ({ai_score_val})".strip())
+                gpa_flag_value = str(display_row.get("gpa_flag", "") or "").strip()
+                if gpa_flag_value:
+                    st.error("GPA flagged below threshold", icon="⚠️")
+            render_badges(display_row, badge_map)
+            role_summaries: list[str] = []
+            for role in ROLE_NAMES:
+                pref_col = f"{role}__pref"
+                fit_col = f"{role}__fit"
+                pref_value = str(display_row.get(pref_col, "") or "").strip()
+                fit_value = str(display_row.get(fit_col, "") or "").strip()
+                if pref_value or fit_value:
+                    pref_label = f"# {pref_value}" if pref_value else "—"
+                    fit_label = fit_value if fit_value else "—"
+                    role_summaries.append(f"{role}: pref {pref_label} · fit {fit_label}")
+            if role_summaries:
+                st.caption("Role interest snapshot")
+                for line in role_summaries:
+                    st.write(line)
+            summary_text = str(display_row.get("summary", "") or "").strip()
+            if summary_text:
+                st.markdown("**AI summary**")
+                st.write(summary_text)
+
+        with my_review_tab:
+            st.caption("Updates save automatically when you interact with the controls.")
+            review_cols = st.columns(2)
+            with review_cols[0]:
+                if user_rating_col:
+                    st.slider(
+                        "Reviewer score",
+                        min_value=0.0,
+                        max_value=5.0,
+                        step=0.5,
+                        key="review_rating_value",
+                        on_change=save_rating,
+                        help="0 = not ready / 5 = outstanding. Autosaves on release.",
+                    )
+                if user_recommend_col:
+                    recommendation_options = ["", "yes", "maybe", "no"]
+                    current_recommend = st.session_state.get("review_recommend_value", "")
+                    if current_recommend not in recommendation_options:
+                        current_recommend = ""
+                        st.session_state["review_recommend_value"] = current_recommend
+                    st.selectbox(
+                        "My recommendation",
+                        options=recommendation_options,
+                        index=recommendation_options.index(current_recommend),
+                        key="review_recommend_value",
+                        on_change=save_recommendation,
+                        format_func=lambda val: val.title() if val else "(none)",
+                    )
+            with review_cols[1]:
+                current_status = st.session_state.get("review_status_value", "")
+                if current_status not in allowed_statuses:
+                    current_status = ""
+                    st.session_state["review_status_value"] = current_status
                 st.selectbox(
-                    "My recommendation",
-                    options=rec_options,
-                    index=rec_options.index(current_value),
-                    key="review_recommend_value",
-                    on_change=save_recommendation,
-                    format_func=lambda val: val.title() if val else "(none)",
-                    help="Share your personal yes/maybe/no recommendation. Autosaves on change.",
+                    "Decision",
+                    options=allowed_statuses,
+                    index=allowed_statuses.index(current_status),
+                    key="review_status_value",
+                    on_change=save_status,
+                    format_func=lambda val: val.title() if val else "(pending)",
+                    help="Pick yes/maybe/no. Changes auto-save.",
                 )
-
-            def save_status() -> None:
-                value = st.session_state.get("review_status_value", "")
-                persist_updates({status_col: value}, "Status saved")
-
-            def save_notes() -> None:
-                value = st.session_state.get("review_notes_value", "")
-                persist_updates({user_note_col: value}, "Notes saved")
-
-            st.selectbox(
-                "Decision",
-                options=allowed_statuses,
-                index=allowed_statuses.index(st.session_state.get("review_status_value", ""))
-                if st.session_state.get("review_status_value", "") in allowed_statuses
-                else 0,
-                key="review_status_value",
-                on_change=save_status,
-                help="Pick yes/maybe/no. Changes auto-save.",
-            )
             st.text_area(
                 "My notes",
                 key="review_notes_value",
                 on_change=save_notes,
-                height=180,
+                height=220,
                 help="Free-form notes. Saving happens when you click outside the field.",
             )
 
-            def save_interview_rating() -> None:
-                if not user_interview_rating_col:
-                    return
-                value = float(st.session_state.get("interview_rating_value", 0.0))
-                value = max(0.0, min(5.0, value))
-                formatted = f"{value:.1f}"
-                st.session_state["interview_rating_display"] = formatted
-                persist_updates({user_interview_rating_col: formatted}, "Interview rating saved")
-
-            def save_interview_outcome() -> None:
-                if not user_interview_outcome_col:
-                    return
-                value = st.session_state.get("interview_outcome_value", "")
-                persist_updates({user_interview_outcome_col: value}, "Interview outcome saved")
-
-            def save_interview_resources() -> None:
-                if not user_interview_resources_col:
-                    return
-                value = st.session_state.get("interview_resources_value", "")
-                persist_updates({user_interview_resources_col: value}, "Resource notes saved")
-
-            def save_interview_summary() -> None:
-                if not user_interview_summary_col:
-                    return
-                value = st.session_state.get("interview_summary_value", "")
-                persist_updates({user_interview_summary_col: value}, "Interview summary saved")
-
-            def make_interview_prompt_saver(slug: str, column: str, label: str):
-                state_key = f"interview_prompt_{slug}_value"
-
-                def _save() -> None:
-                    persist_updates({column: st.session_state.get(state_key, "")}, f"{label} saved")
-
-                return _save
-
-            def make_interview_question_saver(slug: str, column: str):
-                state_key = f"interview_question_{slug}_value"
-
-                def _save() -> None:
-                    persist_updates({column: st.session_state.get(state_key, "")}, "Question status saved")
-
-                return _save
-
-            def append_interview_log() -> None:
-                if not user_interview_log_col:
-                    return
-                entry = st.session_state.get("interview_log_entry", "").strip()
-                if not entry:
-                    return
-                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-                existing = st.session_state.get("interview_log_value", "").strip()
-                new_log = f"[{timestamp}] {entry}" if not existing else f"{existing}\n[{timestamp}] {entry}"
-                st.session_state["interview_log_value"] = new_log
-                st.session_state["interview_log_entry"] = ""
-                persist_updates({user_interview_log_col: new_log}, "Interview log updated")
-
-            if "interview_log_entry" not in st.session_state:
-                st.session_state["interview_log_entry"] = ""
-
-            st.divider()
-            st.subheader("Interview workspace")
+        with interview_tab:
+            st.caption("Interview tools sync instantly so multiple reviewers can collaborate.")
             interview_cols = st.columns(2)
             with interview_cols[0]:
                 st.caption("Structured prompts")
@@ -895,12 +993,12 @@ else:
                         st.session_state["interview_summary_value"] = template_text
                         st.session_state["review_notes_value"] = template_text
                         st.session_state["review_snapshot"] = current_snapshot()
-                    st.toast("Template added to notes", icon="📝")
+                        st.toast("Template added to notes", icon="📝")
                 st.text_area(
                     "Interview summary",
                     key="interview_summary_value",
                     on_change=save_interview_summary,
-                    height=140,
+                    height=160,
                     help="Quick roll-up saved separately from free-form notes.",
                 )
             with interview_cols[1]:
@@ -933,7 +1031,7 @@ else:
                     "Resource notes / links",
                     key="interview_resources_value",
                     on_change=save_interview_resources,
-                    height=80,
+                    height=100,
                     help="Paste Zoom links, agendas, or reminders. Autosaves on blur.",
                 )
                 if interview_resource_links:
@@ -978,82 +1076,81 @@ else:
                             on_change=make_interview_question_saver(slug, column_name),
                             format_func=lambda val: question_status_labels.get(val, val.title() if val else "(pending)"),
                         )
-        st.markdown("**Reviewer notes & ratings**")
-        shared_note = selected_row.get(notes_col, "")
-        if shared_note:
-            st.caption("Shared note")
-            st.write(shared_note)
 
-for reviewer, profile in all_reviewers.items():
-    note_col = f"{notes_col}__{reviewer}"
-    rating_col_user = f"{rating_base}__{reviewer}" if rating_base else None
-    recommend_col_user = f"{recommend_base}__{reviewer}" if recommend_base else None
-    note_text = selected_row.get(note_col, "")
-    rating_text = selected_row.get(rating_col_user, "") if rating_col_user else ""
-    recommend_text = selected_row.get(recommend_col_user, "") if recommend_col_user else ""
-    interview_summary_col_user = f"{interview_def['summary_field']}__{reviewer}"
-    interview_rating_col_user = f"{interview_def['rating_field']}__{reviewer}"
-    interview_outcome_col_user = f"{interview_def['outcome_field']}__{reviewer}"
-    summary_text = selected_row.get(interview_summary_col_user, "")
-    interviewer_rating_text = selected_row.get(interview_rating_col_user, "")
-    interview_outcome_text = selected_row.get(interview_outcome_col_user, "")
-    prompt_highlights = []
-    for prompt in interview_prompts:
-        slug = prompt.get("slug")
-        column_name = prompt.get("column")
-        if not column_name or not slug:
-            continue
-        value = selected_row.get(f"{column_name}__{reviewer}", "")
-        if pd.isna(value) or not str(value).strip():
-            continue
-        prompt_highlights.append((prompt.get("label", slug.title()), str(value)))
-    if pd.isna(note_text):
-        note_text = ""
-    if pd.isna(rating_text):
-        rating_text = ""
-    if pd.isna(recommend_text):
-        recommend_text = ""
-    if pd.isna(summary_text):
-        summary_text = ""
-    if pd.isna(interviewer_rating_text):
-        interviewer_rating_text = ""
-    if pd.isna(interview_outcome_text):
-        interview_outcome_text = ""
-    display = profile.get("display_name", reviewer)
-    with st.expander(display, expanded=(reviewer == current_user)):
-        if rating_col_user and rating_text:
-            st.write(f"Rating: {rating_text}")
-        elif rating_col_user:
-            st.caption("No rating yet.")
-        if recommend_col_user:
-            st.write(
-                f"Recommendation: {recommend_text.title()}" if recommend_text else "Recommendation: (none)"
-            )
-        if interviewer_rating_text:
-            st.write(f"Interview rating: {interviewer_rating_text}")
-        if interview_outcome_text:
-            st.write(f"Interview outcome: {interview_outcome_text.title()}")
-        if summary_text:
-            st.markdown("**Interview summary**")
-            st.write(summary_text)
-        if prompt_highlights:
-            st.markdown("**Interview notes**")
-            for label, value in prompt_highlights:
-                st.write(f"{label}: {value}")
-        if note_text:
-            st.markdown("**General notes**")
-            st.write(note_text)
-        else:
-            st.caption("No notes yet.")
-        st.divider()
-        st.subheader("Responses")
-        for question in cfg.get("fields", {}).get("text_fields", []):
-            answer = selected_row.get(question, "")
-            with st.expander(question, expanded=False):
-                if str(answer).strip():
-                    st.write(answer)
-                else:
-                    st.caption("No response provided.")
+        with feedback_tab:
+            shared_note = str(display_row.get(notes_col, "") or "").strip()
+            if shared_note:
+                st.markdown("**Shared note**")
+                st.write(shared_note)
+            else:
+                st.caption("No shared note yet.")
+
+            def _clean(value) -> str:
+                if pd.isna(value):
+                    return ""
+                return str(value or "").strip()
+
+            if all_reviewers:
+                st.markdown("**Reviewer notes**")
+                for reviewer, profile in all_reviewers.items():
+                    note_col = f"{notes_col}__{reviewer}"
+                    rating_col_user = f"{rating_base}__{reviewer}" if rating_base else None
+                    recommend_col_user = f"{recommend_base}__{reviewer}" if recommend_base else None
+                    note_text = _clean(display_row.get(note_col, ""))
+                    rating_text = _clean(display_row.get(rating_col_user, "")) if rating_col_user else ""
+                    recommend_text = _clean(display_row.get(recommend_col_user, "")) if recommend_col_user else ""
+                    interview_summary_col_user = f"{interview_def['summary_field']}__{reviewer}"
+                    interview_rating_col_user = f"{interview_def['rating_field']}__{reviewer}"
+                    interview_outcome_col_user = f"{interview_def['outcome_field']}__{reviewer}"
+                    summary_text = _clean(display_row.get(interview_summary_col_user, ""))
+                    interviewer_rating_text = _clean(display_row.get(interview_rating_col_user, ""))
+                    interview_outcome_text = _clean(display_row.get(interview_outcome_col_user, ""))
+                    prompt_highlights = []
+                    for prompt in interview_prompts:
+                        slug = prompt.get("slug")
+                        column_name = prompt.get("column")
+                        if not column_name or not slug:
+                            continue
+                        value = display_row.get(f"{column_name}__{reviewer}", "")
+                        if pd.isna(value) or not str(value).strip():
+                            continue
+                        prompt_highlights.append((prompt.get("label", slug.title()), str(value)))
+                    display_name = profile.get("display_name", reviewer)
+                    expanded = reviewer == current_user
+                    with st.expander(display_name, expanded=expanded):
+                        if rating_col_user:
+                            st.write(f"Rating: {rating_text or '—'}")
+                        if recommend_col_user:
+                            rec_display = recommend_text.title() if recommend_text else "(none)"
+                            st.write(f"Recommendation: {rec_display}")
+                        if interviewer_rating_text:
+                            st.write(f"Interview rating: {interviewer_rating_text}")
+                        if interview_outcome_text:
+                            st.write(f"Interview outcome: {interview_outcome_text.title()}")
+                        if summary_text:
+                            st.markdown("**Interview summary**")
+                            st.write(summary_text)
+                        if prompt_highlights:
+                            st.markdown("**Interview notes**")
+                            for label, value in prompt_highlights:
+                                st.write(f"{label}: {value}")
+                        if note_text:
+                            st.markdown("**General notes**")
+                            st.write(note_text)
+                        else:
+                            st.caption("No notes yet.")
+            else:
+                st.caption("No reviewer profiles configured.")
+
+            st.divider()
+            st.markdown("**Application responses**")
+            for question in cfg.get("fields", {}).get("text_fields", []):
+                answer = str(display_row.get(question, "") or "").strip()
+                with st.expander(question, expanded=False):
+                    if answer:
+                        st.write(answer)
+                    else:
+                        st.caption("No response provided.")
 
 st.subheader("Potential Conflicts")
 analytics_cfg = cfg.get("analytics", {})
