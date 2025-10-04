@@ -31,6 +31,12 @@ DEFAULT_INTERVIEW_PROMPTS = {
     "followups": "Follow-up Items",
 }
 DEFAULT_INTERVIEW_OUTCOMES = ["strong yes", "yes", "maybe", "no", "strong no"]
+OUTCOME_SYNONYMS = {
+    "true": "yes",
+    "false": "no",
+    "hold": "maybe",
+    "pending": "maybe",
+}
 DEFAULT_INTERVIEW_RATING_FIELD = "interview_rating"
 DEFAULT_INTERVIEW_OUTCOME_FIELD = "interview_outcome"
 DEFAULT_INTERVIEW_LOG_FIELD = "interview_log"
@@ -75,7 +81,19 @@ def get_interview_definition(cfg: Dict) -> Dict[str, Dict]:
     resources_field = interview_cfg.get("resources_field", DEFAULT_INTERVIEW_RESOURCES_FIELD)
     summary_field = interview_cfg.get("summary_field", DEFAULT_INTERVIEW_SUMMARY_FIELD)
     raw_outcomes = interview_cfg.get("outcome_options", DEFAULT_INTERVIEW_OUTCOMES)
-    outcome_options = [str(item).strip() for item in raw_outcomes if str(item).strip()]
+    cleaned = []
+    for item in raw_outcomes:
+        label = str(item).strip().lower()
+        if not label:
+            continue
+        canonical = OUTCOME_SYNONYMS.get(label, label)
+        if canonical not in cleaned:
+            cleaned.append(canonical)
+    ordered = [option for option in DEFAULT_INTERVIEW_OUTCOMES if option in cleaned]
+    for option in cleaned:
+        if option not in ordered:
+            ordered.append(option)
+    outcome_options = ordered or DEFAULT_INTERVIEW_OUTCOMES
     summary_template = interview_cfg.get("summary_template", [])
     questions_cfg = interview_cfg.get("question_checklist", []) or []
     question_items = []
