@@ -443,6 +443,20 @@ ai_col = cfg["review"]["ai_flag_field"]
 score_col = cfg["review"]["rubric_score_field"]
 rating_base = cfg["review"].get("rating_field", "review_score")
 recommend_base = cfg["review"].get("recommendation_field", "review_recommendation")
+assignment_field = cfg["review"].get("assignment_field", "role_assignment")
+family_field = cfg["review"].get("family_field", "family_group")
+family_cfg = cfg.get("family", {}) or {}
+family_names = family_cfg.get("names") or []
+if not family_names and family_field in df.columns:
+    family_names = sorted(
+        {
+            value.strip()
+            for value in df[family_field].astype(str).tolist()
+            if value and value.strip()
+        }
+    )
+if not family_names:
+    family_names = ["Family 1", "Family 2", "Family 3", "Family 4", "Family 5"]
 interview_def = get_interview_definition(cfg)
 interview_prompts = interview_def.get("prompts", [])
 interview_prompt_cols = {item["slug"]: f"{item['column']}__{current_user}" for item in interview_prompts}
@@ -471,6 +485,10 @@ if "upload_message" not in st.session_state:
 
 if st.session_state.get("upload_message"):
     st.toast(st.session_state.pop("upload_message"), icon="✅")
+if st.session_state.get("assignment_message"):
+    st.toast(st.session_state.pop("assignment_message"), icon="📦")
+if st.session_state.get("family_message"):
+    st.toast(st.session_state.pop("family_message"), icon="👪")
 
 order_by = cfg.get("database", {}).get("order_by", "DateSubmitted")
 db_file = Path(cfg["database"]["path"])
@@ -486,6 +504,36 @@ df = prepare_dataframe(raw_df, cfg)
 pending_mask_all = reviewer_pending_mask(df, reviewer_personal_cols)
 badge_map = badge_columns(df)
 
+reviewer_progress: List[Dict[str, object]] = []
+if not df.empty:
+    total_applicants = len(df)
+    for reviewer_username, profile in all_reviewers.items():
+        reviewer_cols = []
+        note_col = f"{notes_col}__{reviewer_username}"
+        if note_col in df.columns:
+            reviewer_cols.append(note_col)
+        if rating_base:
+            rating_col = f"{rating_base}__{reviewer_username}"
+            if rating_col in df.columns:
+                reviewer_cols.append(rating_col)
+        if recommend_base:
+            recommend_col = f"{recommend_base}__{reviewer_username}"
+            if recommend_col in df.columns:
+                reviewer_cols.append(recommend_col)
+        if not reviewer_cols:
+            continue
+        mask = reviewer_pending_mask(df, reviewer_cols)
+        pending = int(mask.sum())
+        reviewer_progress.append(
+            {
+                "username": reviewer_username,
+                "display": profile.get("display_name", reviewer_username),
+                "pending": pending,
+                "completed": total_applicants - pending,
+                "total": total_applicants,
+            }
+        )
+
 with st.sidebar:
     display_name = st.session_state.get("_auth_display", current_profile.get("display_name", current_user))
     st.markdown(f"**Logged in as:** {display_name}")
@@ -496,6 +544,17 @@ with st.sidebar:
             if dynamic_key.startswith("interview_"):
                 st.session_state.pop(dynamic_key, None)
         trigger_rerun()
+    if reviewer_progress:
+        with st.expander("Reviewer progress", expanded=False):
+            for stats in sorted(reviewer_progress, key=lambda item: item["pending"], reverse=True):
+                label_prefix = "(you) " if stats["username"] == current_user else ""
+                completed = stats["completed"]
+                total = stats["total"]
+                pending = stats["pending"]
+                completion_pct = 0 if not total else int(round((completed / total) * 100))
+                st.write(
+                    f"**{label_prefix}{stats['display']}** — {completed}/{total} completed · {pending} pending ({completion_pct}%)"
+                )
     st.header("Manage Data")
     upload = st.file_uploader("Add new CSV export", type=["csv"], help="Drop a fresh form export to append/update applicants.")
 
@@ -649,6 +708,185 @@ with col_metrics[4]:
     st.metric("My pending reviews", int(pending_mask_all.sum()))
 
 st.caption("Autosave is enabled for review status and notes. Filters affect the table and selection list but not the underlying data.")
+
+st.subheader("Role Assignment Board")
+assignment_tabs = st.tabs(["Board"])
+with assignment_tabs[0]:
+    eligible_statuses = {"yes", "strong yes", "maybe"}
+    if assignment_field not in df.columns:
+        df[assignment_field] = ""
+    assignment_subset = df[df[status_col].astype(str).str.lower().isin(eligible_statuses)].copy()
+    if assignment_subset.empty:
+        st.caption("No eligible applicants yet. Update review statuses to yes/strong yes/maybe to manage assignments.")
+    else:
+        role_lookup = {role.lower(): role for role in ROLE_NAMES}
+
+        def canonical_role(value: str) -> str:
+            value = str(value or "").strip()
+            if not value:
+                return ""
+            return role_lookup.get(value.lower(), value)
+
+        assignment_subset[assignment_field] = assignment_subset[assignment_field].apply(canonical_role)
+        board_df = assignment_subset[[
+            unique_key,
+            "First Name",
+            "Last Name",
+            status_col,
+            score_col,
+            assignment_field,
+        ]].copy()
+        board_df.rename(columns={
+            "First Name": "First",
+            "Last Name": "Last",
+            status_col: "Status",
+            score_col: "Fit score",
+            assignment_field: "Assigned role",
+        }, inplace=True)
+        board_df["Candidate"] = board_df["First"].fillna("") + " " + board_df["Last"].fillna("")
+        board_df.drop(columns=["First", "Last"], inplace=True)
+        board_df = board_df[[unique_key, "Candidate", "Status", "Fit score", "Assigned role"]]
+        board_df.set_index(unique_key, inplace=True)
+        original_assignments = {
+            key: canonical_role(value)
+            for key, value in board_df["Assigned role"].to_dict().items()
+        }
+        st.caption("Use the dropdown to assign each candidate to a role. Leave blank to keep unassigned.")
+        edited_df = st.data_editor(
+            board_df,
+            hide_index=False,
+            key="assignment_editor",
+            column_config={
+                "Fit score": st.column_config.NumberColumn(format="%.2f"),
+                "Assigned role": st.column_config.SelectboxColumn(
+                    "Assigned role",
+                    options=[""] + ROLE_NAMES,
+                    help="Choose a target role or leave blank to keep unassigned.",
+                ),
+            },
+        )
+        edited_df["Assigned role"] = edited_df["Assigned role"].apply(canonical_role)
+        counts = {role: int((edited_df["Assigned role"].str.lower() == role.lower()).sum()) for role in ROLE_NAMES}
+        counts["Unassigned"] = int((edited_df["Assigned role"] == "").sum())
+        summary_cols = st.columns(len(counts))
+        for col, (label, value) in zip(summary_cols, counts.items()):
+            col.metric(label, value)
+        edited_assignments = edited_df["Assigned role"].to_dict()
+        updates = {
+            key: value
+            for key, value in edited_assignments.items()
+            if original_assignments.get(key, "") != value
+        }
+        if updates:
+            with st.spinner("Saving assignments..."):
+                for key, value in updates.items():
+                    update_review(
+                        db_path=cfg["database"]["path"],
+                        table=cfg["database"]["table"],
+                        unique_key=unique_key,
+                        keyval=key,
+                        updates={assignment_field: value},
+                        csv_path=csv_write_target if cfg["csv"].get("write_back", True) else None,
+                        skiprows=cfg["csv"].get("skiprows", 0),
+                        actor=current_user,
+                    )
+                snapshot_review_data(cfg, event="assignment-update")
+                st.session_state["data_version"] += 1
+                st.session_state["assignment_message"] = f"Updated {len(updates)} assignments."
+                load_dataframe.clear()
+                trigger_rerun()
+
+st.subheader("Family Pairing Board")
+family_tabs = st.tabs(["Board"])
+with family_tabs[0]:
+    final_statuses = {"yes", "strong yes"}
+    if family_field not in df.columns:
+        df[family_field] = ""
+    family_subset = df[df[status_col].astype(str).str.lower().isin(final_statuses)].copy()
+    if family_subset.empty:
+        st.caption("Once applicants are marked yes/strong yes they will appear here for family grouping.")
+    else:
+        def normalize_family(value: str) -> str:
+            value = str(value or "").strip()
+            for name in family_names:
+                if value.lower() == name.lower():
+                    return name
+            return value
+
+        family_subset[family_field] = family_subset[family_field].apply(normalize_family)
+        family_df = family_subset[[
+            unique_key,
+            "First Name",
+            "Last Name",
+            status_col,
+            score_col,
+            family_field,
+        ]].copy()
+        family_df.rename(columns={
+            "First Name": "First",
+            "Last Name": "Last",
+            status_col: "Status",
+            score_col: "Fit score",
+            family_field: "Family",
+        }, inplace=True)
+        family_df["Candidate"] = family_df["First"].fillna("") + " " + family_df["Last"].fillna("")
+        family_df.drop(columns=["First", "Last"], inplace=True)
+        family_df = family_df[[unique_key, "Candidate", "Status", "Fit score", "Family"]]
+        family_df.set_index(unique_key, inplace=True)
+        original_family = {key: normalize_family(value) for key, value in family_df["Family"].to_dict().items()}
+        st.caption("Assign each confirmed staff member to a family group. Leave blank to keep unplaced.")
+        edited_family_df = st.data_editor(
+            family_df,
+            hide_index=False,
+            key="family_editor",
+            column_config={
+                "Fit score": st.column_config.NumberColumn(format="%.2f"),
+                "Family": st.column_config.SelectboxColumn(
+                    "Family",
+                    options=[""] + family_names,
+                    help="Choose the family group for this staff member.",
+                ),
+            },
+        )
+        edited_family_df["Family"] = edited_family_df["Family"].apply(normalize_family)
+        family_counts = {name: int((edited_family_df["Family"].str.lower() == name.lower()).sum()) for name in family_names}
+        family_counts["Unplaced"] = int((edited_family_df["Family"] == "").sum())
+        summary_cols = st.columns(len(family_counts))
+        for col, (label, value) in zip(summary_cols, family_counts.items()):
+            col.metric(label, value)
+        placed_counts = [count for name, count in family_counts.items() if name != "Unplaced"]
+        if placed_counts:
+            max_count = max(placed_counts)
+            min_count = min(placed_counts)
+            if max_count - min_count > 1:
+                st.warning(
+                    f"Families vary by {max_count - min_count} members. Consider rebalancing for more even groups.",
+                    icon="⚖️",
+                )
+        edited_family_assignments = edited_family_df["Family"].to_dict()
+        family_updates = {
+            key: value
+            for key, value in edited_family_assignments.items()
+            if original_family.get(key, "") != value
+        }
+        if family_updates:
+            with st.spinner("Saving family assignments..."):
+                for key, value in family_updates.items():
+                    update_review(
+                        db_path=cfg["database"]["path"],
+                        table=cfg["database"]["table"],
+                        unique_key=unique_key,
+                        keyval=key,
+                        updates={family_field: value},
+                        csv_path=csv_write_target if cfg["csv"].get("write_back", True) else None,
+                        skiprows=cfg["csv"].get("skiprows", 0),
+                        actor=current_user,
+                    )
+                snapshot_review_data(cfg, event="family-update")
+                st.session_state["data_version"] += 1
+                st.session_state["family_message"] = f"Updated {len(family_updates)} family placements."
+                load_dataframe.clear()
+                trigger_rerun()
 
 rating_base = cfg["review"].get("rating_field", "review_score")
 rating_avg_col = f"{rating_base}_avg" if rating_base else None

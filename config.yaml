@@ -34,6 +34,15 @@ review:
   - 'no'
   rating_field: review_score
   recommendation_field: review_recommendation
+  assignment_field: role_assignment
+  family_field: family_group
+family:
+  names:
+    - Family 1
+    - Family 2
+    - Family 3
+    - Family 4
+    - Family 5
 rubric:
   weights:
     experience_bonus: 1.0
