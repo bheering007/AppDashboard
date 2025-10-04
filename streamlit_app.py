@@ -276,7 +276,6 @@ def filtered_dataframe(
     status_filter: List[str],
     ai_filter: str,
     gpa_only: bool,
-    min_fit: float,
     badge_filter: List[str],
     role_focus: str,
     role_pref_rule: str,
@@ -315,8 +314,6 @@ def filtered_dataframe(
             filtered = filtered[filtered["gpa_flag"].fillna("") == "LOW"]
         else:
             filtered = filtered.iloc[0:0]
-    if "_fit_numeric" in filtered.columns:
-        filtered = filtered[filtered["_fit_numeric"].fillna(-999) >= min_fit]
     for badge_col in badge_filter:
         if badge_col in filtered.columns:
             filtered = filtered[filtered[badge_col].str.lower() == "yes"]
@@ -333,9 +330,6 @@ def filtered_dataframe(
             filtered = filtered.iloc[0:0]
     sort_cols = []
     sort_orders = []
-    if '_fit_numeric' in filtered.columns:
-        sort_cols.append('_fit_numeric')
-        sort_orders.append(False)
     rating_base = cfg["review"].get("rating_field", "review_score")
     rating_avg_col = f"{rating_base}_avg" if rating_base else None
     if rating_avg_col and rating_avg_col in filtered.columns:
@@ -396,14 +390,14 @@ def render_badges(row: pd.Series, badge_map: Dict[str, str]) -> None:
 
 
 def render_role_table(df: pd.DataFrame, role: str, cfg: Dict) -> None:
-    score_col = cfg["review"]["rubric_score_field"]
+    score_col_raw = cfg["review"].get("rubric_score_field")
+    score_col = score_col_raw if score_col_raw and score_col_raw in df.columns else None
     status_col = cfg["review"]["status_field"]
     recommend_base = cfg["review"].get("recommendation_field", "review_recommendation")
     display_cols = [
         cfg["database"]["unique_key"],
         "First Name",
         "Last Name",
-        score_col,
         f"{role}__fit",
         f"{role}__pref",
         status_col,
@@ -411,6 +405,8 @@ def render_role_table(df: pd.DataFrame, role: str, cfg: Dict) -> None:
         cfg["review"]["ai_flag_field"],
         "gpa_flag",
     ]
+    if score_col:
+        display_cols.insert(3, score_col)
     display_cols = [col for col in display_cols if col in df.columns]
     if not display_cols:
         st.info("No data available for this role yet.")
@@ -443,7 +439,8 @@ setup_autorefresh(cfg.get("ui", {}).get("auto_refresh_seconds", 0))
 notes_col = cfg["review"]["notes_field"]
 status_col = cfg["review"]["status_field"]
 ai_col = cfg["review"]["ai_flag_field"]
-score_col = cfg["review"]["rubric_score_field"]
+score_col_raw = cfg["review"].get("rubric_score_field")
+score_col = score_col_raw if score_col_raw and score_col_raw in df.columns else None
 rating_base = cfg["review"].get("rating_field", "review_score")
 recommend_base = cfg["review"].get("recommendation_field", "review_recommendation")
 assignment_field = cfg["review"].get("assignment_field", "role_assignment")
@@ -604,13 +601,9 @@ with st.sidebar:
             help="Leave empty to include every decision.",
         )
         ai_filter = st.selectbox("AI flag", options=["All", "Flagged", "Not flagged"], index=0)
-        score_cols = st.columns([1, 1], gap="small")
-        with score_cols[0]:
-            gpa_only = st.checkbox("Only show GPA flag (<3.0)", value=False)
-            min_fit = st.slider("Minimum fit score", -2.0, 6.0, 0.0, 0.1)
-        with score_cols[1]:
-            role_focus = st.selectbox("Role focus", options=["All"] + ROLE_NAMES)
-            role_pref_rule = st.selectbox("Preference filter", options=["Any", "#1 only", "#1 or #2"], index=0)
+        gpa_only = st.checkbox("Only show GPA flag (<3.0)", value=False)
+        role_focus = st.selectbox("Role focus", options=["All"] + ROLE_NAMES)
+        role_pref_rule = st.selectbox("Preference filter", options=["Any", "#1 only", "#1 or #2"], index=0)
         badge_label = "Must include badges" if badge_map else "Badges"
         selected_badges = st.multiselect(
             badge_label,
@@ -678,7 +671,6 @@ filtered_df = filtered_dataframe(
     status_filter=status_filter,
     ai_filter=ai_filter,
     gpa_only=gpa_only,
-    min_fit=min_fit,
     badge_filter=selected_badges,
     role_focus=role_focus,
     role_pref_rule=role_pref_rule,
@@ -793,8 +785,9 @@ with review_tab:
         "First Name",
         "Last Name",
         *(cfg.get("fields", {}).get("contact_fields", [])[:1]),
-        score_col,
     ]
+    if score_col:
+        default_table_cols.append(score_col)
     if rating_avg_col:
         default_table_cols.append(rating_avg_col)
     default_table_cols.extend([
@@ -1494,11 +1487,14 @@ with review_tab:
             unique_key,
             'First Name',
             'Last Name',
-            score_col,
+        ]
+        if score_col:
+            conflict_view_cols.append(score_col)
+        conflict_view_cols.extend([
             '_rating_gap',
             '_recommendation_mix',
             status_col,
-        ]
+        ])
         conflict_view_cols = [col for col in conflict_view_cols if col in conflict_df.columns]
         st.dataframe(conflict_df[conflict_view_cols], use_container_width=True, hide_index=True)
     else:
@@ -1532,14 +1528,17 @@ with review_tab:
             unique_key,
             "First Name",
             "Last Name",
-            score_col,
+        ]
+        if score_col:
+            display_cols.append(score_col)
+        display_cols.extend([
             ai_col,
             "ai_score",
             "gpa_flag",
             status_col,
             notes_col,
             "summary",
-        ]
+        ])
         display_cols = [col for col in display_cols if col in df.columns]
         if display_cols:
             ordered = df.copy()
@@ -1659,28 +1658,39 @@ with staffing_tab:
         if assignment_unassigned_only:
             assignment_view = assignment_view[assignment_view[assignment_field] == ""]
 
-        board_df = assignment_view[[
+        assignment_columns = [
             unique_key,
             "First Name",
             "Last Name",
             status_col,
-            score_col,
+        ]
+        if score_col:
+            assignment_columns.append(score_col)
+        assignment_columns.extend([
             assignment_field,
             family_field if family_field in assignment_view.columns else None,
-        ]].copy()
+        ])
+        assignment_columns = [col for col in assignment_columns if col]
+        board_df = assignment_view[assignment_columns].copy()
         if family_field not in board_df.columns:
             board_df[family_field] = ""
-        board_df.rename(columns={
+        rename_map = {
             "First Name": "First",
             "Last Name": "Last",
             status_col: "Status",
-            score_col: "Fit score",
             assignment_field: "Assigned role",
             family_field: "Family",
-        }, inplace=True)
+        }
+        if score_col:
+            rename_map[score_col] = "Fit score"
+        board_df.rename(columns=rename_map, inplace=True)
         board_df["Candidate"] = board_df["First"].fillna("") + " " + board_df["Last"].fillna("")
         board_df.drop(columns=["First", "Last"], inplace=True)
-        board_df = board_df[[unique_key, "Candidate", "Status", "Fit score", "Assigned role", "Family"]]
+        column_order = [unique_key, "Candidate", "Status"]
+        if score_col:
+            column_order.append("Fit score")
+        column_order.extend(["Assigned role", "Family"])
+        board_df = board_df[column_order]
         board_df.set_index(unique_key, inplace=True)
         original_assignments = {
             key: canonical_role(value)
@@ -1692,7 +1702,7 @@ with staffing_tab:
             hide_index=False,
             key="assignment_editor",
             column_config={
-                "Fit score": st.column_config.NumberColumn(format="%.2f"),
+                **({"Fit score": st.column_config.NumberColumn(format="%.2f")} if score_col else {}),
                 "Assigned role": st.column_config.SelectboxColumn(
                     "Assigned role",
                     options=[""] + ROLE_NAMES,
@@ -1750,7 +1760,11 @@ with staffing_tab:
                 tone = "red"
             st.markdown(f"<div class='roster-card {tone}'><h4>{role}</h4><p><strong>{count}</strong> of <strong>{target}</strong> spots filled</p>", unsafe_allow_html=True)
             if count:
-                members_sorted = members.sort_values(score_col, ascending=False) if score_col in members.columns else members
+                members_sorted = (
+                    members.sort_values(score_col, ascending=False)
+                    if score_col and score_col in members.columns
+                    else members
+                )
                 items = []
                 for _, row in members_sorted.iterrows():
                     badges = []
@@ -1797,7 +1811,8 @@ with staffing_tab:
             if family_pair_field in profile_row:
                 st.write(f"**Family pod:** {profile_row.get(family_pair_field, '—') or '—'}")
         with profile_cols[1]:
-            st.metric("Fit score", profile_row.get(score_col, '—'))
+            if score_col:
+                st.metric("Fit score", profile_row.get(score_col, '—'))
             st.metric("AI flag", profile_row.get(ai_col, '—'))
             st.metric("GPA flag", profile_row.get("gpa_flag", '—'))
         shared_note = str(profile_row.get(notes_col, "") or "").strip()
@@ -1833,22 +1848,28 @@ with staffing_tab:
             "First Name",
             "Last Name",
             status_col,
-            score_col,
+        ]
+        if score_col:
+            family_columns.append(score_col)
+        family_columns.extend([
             assignment_field,
             family_field,
-        ]
+        ])
         if family_pair_field and family_pair_field in family_subset.columns:
             family_columns.append(family_pair_field)
         family_board = family_subset[family_columns].copy()
-        family_board.rename(columns={
+        rename_map = {
             "First Name": "First",
             "Last Name": "Last",
             status_col: "Status",
-            score_col: "Fit score",
             assignment_field: "Assigned role",
             family_field: "Family",
-            **({family_pair_field: "Family pod"} if family_pair_field and family_pair_field in family_columns else {}),
-        }, inplace=True)
+        }
+        if score_col:
+            rename_map[score_col] = "Fit score"
+        if family_pair_field and family_pair_field in family_columns:
+            rename_map[family_pair_field] = "Family pod"
+        family_board.rename(columns=rename_map, inplace=True)
         family_board["Candidate"] = family_board["First"].fillna("") + " " + family_board["Last"].fillna("")
         family_board.drop(columns=["First", "Last"], inplace=True)
         family_board["Family"] = family_board["Family"].apply(normalize_family)
@@ -1856,7 +1877,11 @@ with staffing_tab:
             family_board["Family pod"] = family_board["Family pod"].apply(lambda v: str(v or "").strip())
         else:
             family_board["Family pod"] = ""
-        family_board = family_board[[unique_key, "Candidate", "Status", "Fit score", "Assigned role", "Family", "Family pod"]]
+        column_order = [unique_key, "Candidate", "Status"]
+        if score_col:
+            column_order.append("Fit score")
+        column_order.extend(["Assigned role", "Family", "Family pod"])
+        family_board = family_board[column_order]
         family_board.set_index(unique_key, inplace=True)
 
         family_filter_col, _ = st.columns([1, 3])
@@ -1878,7 +1903,7 @@ with staffing_tab:
             hide_index=False,
             key="family_assignment_editor",
             column_config={
-                "Fit score": st.column_config.NumberColumn(format="%.2f"),
+                **({"Fit score": st.column_config.NumberColumn(format="%.2f")} if score_col else {}),
                 "Assigned role": st.column_config.TextColumn("Assigned role", disabled=True),
                 "Family": st.column_config.SelectboxColumn("Family", options=family_names, help="Choose the family group for this staff member."),
                 "Family pod": st.column_config.TextColumn(
@@ -1930,7 +1955,7 @@ with staffing_tab:
             members = family_subset[family_subset[family_field].astype(str).str.lower() == family_name.lower()].copy()
             capacity = max(len(members), family_capacity_map.get(family_name, family_default_capacity))
             st.markdown(f"### {family_name} ({len(members)}/{capacity})")
-            if score_col in members.columns:
+            if score_col and score_col in members.columns:
                 members.sort_values(score_col, ascending=False, inplace=True)
             seat_cards = []
             accent_color = family_color_map.get(family_name, family_color_map.get(family_name.lower(), "#2f9d5d"))

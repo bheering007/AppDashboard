@@ -466,8 +466,11 @@ def prepare_enriched_frame(df: pd.DataFrame, cfg: Dict) -> pd.DataFrame:
             recommend_col = f"{recommend_base}__{username}"
             if recommend_col not in df.columns:
                 df[recommend_col] = ""
-    fit_scores = compute_fit(df, cfg)
-    df[cfg["review"]["rubric_score_field"]] = [f"{score:.2f}" for score in fit_scores]
+    rubric_field = cfg["review"]["rubric_score_field"]
+    if rubric_field in df.columns:
+        df[rubric_field] = ""
+    else:
+        df[rubric_field] = ""
     ai_flags: List[str] = []
     ai_scores: List[str] = []
     summaries: List[str] = []
@@ -493,7 +496,6 @@ def prepare_enriched_frame(df: pd.DataFrame, cfg: Dict) -> pd.DataFrame:
         for role in ROLE_NAMES:
             pref = infer_role_preference(row, role, cfg)
             df.at[idx, f"{role}__pref"] = "" if pref is None else str(pref)
-            df.at[idx, f"{role}__fit"] = f"{compute_role_fit(fit_scores[offset], pref):.2f}"
     df[cfg["review"]["ai_flag_field"]] = ai_flags
     df["ai_score"] = ai_scores
     df["summary"] = summaries
