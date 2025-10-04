@@ -1865,8 +1865,6 @@ with staffing_tab:
             assignment_field: "Assigned role",
             family_field: "Family",
         }
-        if score_col:
-            rename_map[score_col] = "Fit score"
         if family_pair_field and family_pair_field in family_columns:
             rename_map[family_pair_field] = "Family pod"
         family_board.rename(columns=rename_map, inplace=True)
@@ -1877,10 +1875,7 @@ with staffing_tab:
             family_board["Family pod"] = family_board["Family pod"].apply(lambda v: str(v or "").strip())
         else:
             family_board["Family pod"] = ""
-        column_order = [unique_key, "Candidate", "Status"]
-        if score_col:
-            column_order.append("Fit score")
-        column_order.extend(["Assigned role", "Family", "Family pod"])
+        column_order = [unique_key, "Candidate", "Status", "Assigned role", "Family", "Family pod"]
         family_board = family_board[column_order]
         family_board.set_index(unique_key, inplace=True)
 

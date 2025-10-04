@@ -414,12 +414,6 @@ def infer_role_preference(row: pd.Series, role: str, cfg: Dict) -> Optional[int]
     return None
 
 
-def compute_role_fit(base_score: float, pref: Optional[int]) -> float:
-    if pref is None:
-        return base_score
-    return base_score + (3 - pref) * 0.25
-
-
 def compute_badges(essays: Iterable[str], cfg: Dict[str, Dict]) -> Dict[str, str]:
     badge_cfg = cfg.get("rubric", {}).get("keyword_badges", {})
     text = " ".join([t.lower() for t in essays if isinstance(t, str)])
