@@ -44,6 +44,12 @@ family:
     - Ptolomy
     - Cadets
     - Maroons
+  default_capacity: 12
+staffing:
+  role_targets:
+    Counselor: 35
+    Buddy Staff: 20
+    Programming Staff: 10
 rubric:
   weights:
     experience_bonus: 1.0

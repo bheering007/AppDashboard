@@ -447,6 +447,9 @@ assignment_field = cfg["review"].get("assignment_field", "role_assignment")
 family_field = cfg["review"].get("family_field", "family_group")
 family_cfg = cfg.get("family", {}) or {}
 family_names = family_cfg.get("names") or []
+family_default_capacity = family_cfg.get("default_capacity", 12)
+staffing_cfg = cfg.get("staffing", {}) or {}
+role_targets_cfg = staffing_cfg.get("role_targets", {}) or {}
 interview_def = get_interview_definition(cfg)
 interview_prompts = interview_def.get("prompts", [])
 interview_prompt_cols = {item["slug"]: f"{item['column']}__{current_user}" for item in interview_prompts}
@@ -692,6 +695,29 @@ if not family_names:
     if not family_names:
         family_names = ["Family 1", "Family 2", "Family 3", "Family 4", "Family 5"]
 
+role_badge_symbols = ["🟦", "🟩", "🟧", "🟥", "🟪", "🟨", "🟫", "⬛"]
+role_badge_map = {role: role_badge_symbols[idx % len(role_badge_symbols)] for idx, role in enumerate(ROLE_NAMES)}
+
+family_badge_symbols = ["🟪", "🟫", "⬜", "⬛", "🟦", "🟩", "🟥", "🟧", "🟨"]
+family_badge_map = {name: family_badge_symbols[idx % len(family_badge_symbols)] for idx, name in enumerate(family_names)}
+
+def format_role_badge(role_value: str) -> str:
+    value = str(role_value or "").strip()
+    if not value:
+        return "—"
+    symbol = role_badge_map.get(value, "▪️")
+    return f"{symbol} {value}"
+
+def format_family_badge(family_value: str) -> str:
+    value = str(family_value or "").strip()
+    if not value:
+        return "—"
+    symbol = family_badge_map.get(value, "▪️")
+    return f"{symbol} {value}"
+
+filtered_df["Role tag"] = filtered_df.get(assignment_field, "").apply(format_role_badge)
+filtered_df["Family tag"] = filtered_df.get(family_field, "").apply(format_family_badge)
+
 review_tab, staffing_tab = st.tabs(["Review Dashboard", "Staffing Boards"])
 
 with review_tab:
@@ -730,6 +756,8 @@ with review_tab:
         "ai_score",
         "gpa_flag",
         status_col,
+        "Role tag",
+        "Family tag",
         notes_col,
         "summary",
     ])
@@ -1486,6 +1514,41 @@ with review_tab:
         st.dataframe(audit_df, use_container_width=True, hide_index=True)
 
 with staffing_tab:
+    if "staffing_css_loaded" not in st.session_state:
+        st.markdown(
+            """
+            <style>
+            .roster-card {
+                border-radius: 10px;
+                padding: 0.85rem;
+                margin-bottom: 1rem;
+                box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+                background: var(--backgroundColor-secondary);
+            }
+            .roster-card.green {border-left: 6px solid #2f9d5d;}
+            .roster-card.yellow {border-left: 6px solid #f4a300;}
+            .roster-card.red {border-left: 6px solid #d64545;}
+            .roster-card h4 {margin: 0 0 0.35rem 0;}
+            .roster-card ul {padding-left: 1.1rem; margin: 0;}
+            .seat-grid {display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 0.75rem;}
+            .seat-card {padding: 0.75rem; border-radius: 10px; border: 1px solid rgba(120,120,120,0.25); background: var(--backgroundColor-primary); min-height: 92px; display: flex; flex-direction: column; justify-content: space-between;}
+            .seat-card.filled {border-left: 5px solid #2f9d5d;}
+            .seat-card.empty {border-style: dashed; color: rgba(120,120,120,0.8); text-align: center;}
+            .seat-card .badges {font-size: 0.8rem; color: rgba(120,120,120,0.9);}
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.session_state["staffing_css_loaded"] = True
+
+    role_lookup = {role.lower(): role for role in ROLE_NAMES}
+
+    def canonical_role(value: str) -> str:
+        value = str(value or "").strip()
+        if not value:
+            return ""
+        return role_lookup.get(value.lower(), value)
+
     st.subheader("Role Assignment Board")
     eligible_statuses = {"yes", "strong yes", "maybe"}
     if assignment_field not in df.columns:
@@ -1494,14 +1557,6 @@ with staffing_tab:
     if assignment_subset.empty:
         st.caption("No eligible applicants yet. Update review statuses to yes/strong yes/maybe to manage assignments.")
     else:
-        role_lookup = {role.lower(): role for role in ROLE_NAMES}
-
-        def canonical_role(value: str) -> str:
-            value = str(value or "").strip()
-            if not value:
-                return ""
-            return role_lookup.get(value.lower(), value)
-
         assignment_subset[assignment_field] = assignment_subset[assignment_field].apply(canonical_role)
         board_df = assignment_subset[[
             unique_key,
@@ -1543,7 +1598,7 @@ with staffing_tab:
         edited_df["Assigned role"] = edited_df["Assigned role"].apply(canonical_role)
         counts = {role: int((edited_df["Assigned role"].str.lower() == role.lower()).sum()) for role in ROLE_NAMES}
         counts["Unassigned"] = int((edited_df["Assigned role"] == "").sum())
-        summary_cols = st.columns(len(counts))
+        summary_cols = st.columns(len(counts)) if counts else []
         for col, (label, value) in zip(summary_cols, counts.items()):
             col.metric(label, value)
         edited_assignments = edited_df["Assigned role"].to_dict()
@@ -1572,7 +1627,39 @@ with staffing_tab:
                 trigger_rerun()
 
     st.divider()
-    st.subheader("Family Pairing Board")
+    st.subheader("Role Rosters")
+    role_targets = {role: max(role_targets_cfg.get(role, 0), 0) for role in ROLE_NAMES}
+    roster_columns = st.columns(min(len(ROLE_NAMES), 3)) if ROLE_NAMES else []
+    for idx, role in enumerate(ROLE_NAMES):
+        column = roster_columns[idx % len(roster_columns)] if roster_columns else st
+        with column:
+            members = df[df[assignment_field].astype(str).str.lower() == role.lower()].copy()
+            count = len(members)
+            target = role_targets.get(role, count) or count
+            if count == target:
+                tone = "green"
+            elif count < target:
+                tone = "yellow" if target - count <= 2 else "red"
+            else:
+                tone = "red"
+            st.markdown(f"<div class='roster-card {tone}'><h4>{role}</h4><p><strong>{count}</strong> of <strong>{target}</strong> spots filled</p>", unsafe_allow_html=True)
+            if count:
+                members_sorted = members.sort_values(score_col, ascending=False) if score_col in members.columns else members
+                items = []
+                for _, row in members_sorted.iterrows():
+                    badges = []
+                    if str(row.get(ai_col, '')).upper() == 'YES':
+                        badges.append('🤖 AI')
+                    if str(row.get('gpa_flag', '')).upper() == 'LOW':
+                        badges.append('📉 GPA')
+                    badge_text = f" ({', '.join(badges)})" if badges else ''
+                    items.append(f"<li>{row.get('First Name', '')} {row.get('Last Name', '')}{badge_text}</li>")
+                st.markdown('<ul>' + ''.join(items) + '</ul></div>', unsafe_allow_html=True)
+            else:
+                st.markdown("<p style='margin:0;'>No assignments yet.</p></div>", unsafe_allow_html=True)
+
+    st.divider()
+    st.subheader("Family Seat Map")
     final_statuses = {"yes", "strong yes"}
     if family_field not in df.columns:
         df[family_field] = ""
@@ -1580,85 +1667,27 @@ with staffing_tab:
     if family_subset.empty:
         st.caption("Once applicants are marked yes/strong yes they will appear here for family grouping.")
     else:
-
-        def normalize_family(value: str) -> str:
-            value = str(value or "").strip()
-            for name in family_names:
-                if value.lower() == name.lower():
-                    return name
-            return value
-
-        family_subset[family_field] = family_subset[family_field].apply(normalize_family)
-        family_df = family_subset[[
-            unique_key,
-            "First Name",
-            "Last Name",
-            status_col,
-            score_col,
-            family_field,
-        ]].copy()
-        family_df.rename(columns={
-            "First Name": "First",
-            "Last Name": "Last",
-            status_col: "Status",
-            score_col: "Fit score",
-            family_field: "Family",
-        }, inplace=True)
-        family_df["Candidate"] = family_df["First"].fillna("") + " " + family_df["Last"].fillna("")
-        family_df.drop(columns=["First", "Last"], inplace=True)
-        family_df = family_df[[unique_key, "Candidate", "Status", "Fit score", "Family"]]
-        family_df.set_index(unique_key, inplace=True)
-        original_family = {key: normalize_family(value) for key, value in family_df["Family"].to_dict().items()}
-        st.caption("Assign each confirmed staff member to a family group. Leave blank to keep unplaced.")
-        edited_family_df = st.data_editor(
-            family_df,
-            hide_index=False,
-            key="family_editor",
-            column_config={
-                "Fit score": st.column_config.NumberColumn(format="%.2f"),
-                "Family": st.column_config.SelectboxColumn(
-                    "Family",
-                    options=[""] + family_names,
-                    help="Choose the family group for this staff member.",
-                ),
-            },
-        )
-        edited_family_df["Family"] = edited_family_df["Family"].apply(normalize_family)
-        family_counts = {name: int((edited_family_df["Family"].str.lower() == name.lower()).sum()) for name in family_names}
-        family_counts["Unplaced"] = int((edited_family_df["Family"] == "").sum())
-        summary_cols = st.columns(len(family_counts))
-        for col, (label, value) in zip(summary_cols, family_counts.items()):
-            col.metric(label, value)
-        placed_counts = [count for name, count in family_counts.items() if name != "Unplaced"]
-        if placed_counts:
-            max_count = max(placed_counts)
-            min_count = min(placed_counts)
-            if max_count - min_count > 1:
-                st.warning(
-                    f"Families vary by {max_count - min_count} members. Consider rebalancing for more even groups.",
-                    icon="⚖️",
+        family_subset[family_field] = family_subset[family_field].apply(lambda value: next((name for name in family_names if str(value or '').strip().lower() == name.lower()), str(value or '').strip()))
+        for family_name in family_names:
+            members = family_subset[family_subset[family_field].astype(str).str.lower() == family_name.lower()].copy()
+            capacity = max(len(members), family_default_capacity)
+            st.markdown(f"### {family_name} ({len(members)}/{capacity})")
+            if score_col in members.columns:
+                members.sort_values(score_col, ascending=False, inplace=True)
+            seat_cards = []
+            for _, row in members.iterrows():
+                badges = []
+                if str(row.get(ai_col, '')).upper() == 'YES':
+                    badges.append('🤖')
+                if str(row.get('gpa_flag', '')).upper() == 'LOW':
+                    badges.append('📉')
+                assignment_badge = format_role_badge(row.get(assignment_field, ''))
+                badge_text = ' '.join(badges) + (f" {assignment_badge}" if assignment_badge != '—' else '')
+                seat_cards.append(
+                    "<div class='seat-card filled'>"
+                    f"<div><strong>{row.get('First Name', '')} {row.get('Last Name', '')}</strong></div>"
+                    f"<div class='badges'>{badge_text.strip() or '—'}</div></div>"
                 )
-        edited_family_assignments = edited_family_df["Family"].to_dict()
-        family_updates = {
-            key: value
-            for key, value in edited_family_assignments.items()
-            if original_family.get(key, "") != value
-        }
-        if family_updates:
-            with st.spinner("Saving family assignments..."):
-                for key, value in family_updates.items():
-                    update_review(
-                        db_path=cfg["database"]["path"],
-                        table=cfg["database"]["table"],
-                        unique_key=unique_key,
-                        keyval=key,
-                        updates={family_field: value},
-                        csv_path=csv_write_target if cfg["csv"].get("write_back", True) else None,
-                        skiprows=cfg["csv"].get("skiprows", 0),
-                        actor=current_user,
-                    )
-                snapshot_review_data(cfg, event="family-update")
-                st.session_state["data_version"] += 1
-                st.session_state["family_message"] = f"Updated {len(family_updates)} family placements."
-                load_dataframe.clear()
-                trigger_rerun()
+            for _ in range(capacity - len(members)):
+                seat_cards.append("<div class='seat-card empty'>Open Seat</div>")
+            st.markdown("<div class='seat-grid'>" + ''.join(seat_cards) + "</div>", unsafe_allow_html=True)
