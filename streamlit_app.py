@@ -1884,7 +1884,6 @@ with staffing_tab:
                 "Family pod": st.column_config.TextColumn(
                     "Family pod",
                     help="Label pairings or pods within the family (e.g., Counselor Pod 1).",
-                    placeholder="Enter pairing",
                 ),
             },
         )
