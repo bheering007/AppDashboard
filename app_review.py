@@ -303,49 +303,6 @@ def summarize_answers(answers: Iterable[str], max_sentences: int = 4) -> str:
     return " ".join(chosen)
 
 
-def keyword_score(texts: Iterable[str], positive: Iterable[str], negative: Iterable[str]) -> int:
-    text = " ".join([t for t in texts if isinstance(t, str)]).lower()
-    return sum(text.count(word.lower()) for word in positive) - sum(
-        text.count(word.lower()) for word in negative
-    )
-
-
-def compute_fit(df: pd.DataFrame, cfg: Dict) -> List[float]:
-    rubric = cfg.get("rubric", {})
-    weights = rubric.get("weights", {})
-    pos_keywords = rubric.get("keywords_positive", [])
-    neg_keywords = rubric.get("keywords_negative", [])
-    text_fields = cfg.get("fields", {}).get("text_fields", [])
-    scores: List[float] = []
-    for _, row in df.iterrows():
-        essays = [str(row.get(col, "")) for col in text_fields]
-        kw_score = keyword_score(essays, pos_keywords, neg_keywords)
-        motivation = kw_score / 5.0
-        exp_cols = [c for c in df.columns if "previous experience" in c.lower()]
-        has_exp = any(str(row.get(c, "")).strip().lower() in {"yes", "y", "i have", "yep"} for c in exp_cols)
-        availability_cols = [
-            c
-            for c in df.columns
-            if "willing" in c.lower() or "commitments" in c.lower()
-        ]
-        available = not any("conflict" in str(row.get(c, "")).lower() for c in availability_cols)
-        gpa_value = 0.0
-        for col in df.columns:
-            if "gpa" in col.lower():
-                try:
-                    gpa_value = max(gpa_value, float(str(row.get(col, "")).split()[0]))
-                except Exception:
-                    continue
-        score = (
-            weights.get("motivation_quality", 0.0) * motivation
-            + weights.get("experience_bonus", 0.0) * (1.0 if has_exp else 0.0)
-            + weights.get("availability", 0.0) * (1.0 if available else 0.0)
-            + weights.get("gpa", 0.0) * (gpa_value - 2.5)
-        )
-        scores.append(score)
-    return scores
-
-
 def extract_gpa_flag(row: pd.Series, threshold: float) -> str:
     gpa_value: Optional[float] = None
     for col in row.index:
