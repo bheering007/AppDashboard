@@ -449,7 +449,9 @@ def prepare_enriched_frame(df: pd.DataFrame, cfg: Dict) -> pd.DataFrame:
     rating_base = cfg["review"].get("rating_field")
     recommend_base = cfg["review"].get("recommendation_field")
     assignment_field = cfg["review"].get("assignment_field", "role_assignment")
+    family_pair_field = cfg["review"].get("family_pair_field", "family_pod")
     family_field = cfg["review"].get("family_field", "family_group")
+    family_pair_field = cfg["review"].get("family_pair_field", "family_pod")
     if recommend_base and recommend_base not in df.columns:
         df[recommend_base] = ""
     for username in reviewers.keys():
@@ -502,6 +504,8 @@ def prepare_enriched_frame(df: pd.DataFrame, cfg: Dict) -> pd.DataFrame:
         df[assignment_field] = ""
     if family_field and family_field not in df.columns:
         df[family_field] = ""
+    if family_pair_field and family_pair_field not in df.columns:
+        df[family_pair_field] = ""
     return df
 
 
@@ -538,6 +542,7 @@ def import_csv_to_db(
     recommend_base = cfg["review"].get("recommendation_field")
     assignment_field = cfg["review"].get("assignment_field", "role_assignment")
     family_field = cfg["review"].get("family_field", "family_group")
+    family_pair_field = cfg["review"].get("family_pair_field", "family_pod")
     interview_def = get_interview_definition(cfg)
     interview_prompt_bases = [item["column"] for item in interview_def["prompts"]]
     interview_question_bases = [item["column"] for item in interview_def["questions"]]
@@ -568,8 +573,8 @@ def import_csv_to_db(
         extra_cols.append(assignment_field)
     if family_field:
         extra_cols.append(family_field)
-    if family_field:
-        extra_cols.append(family_field)
+    if family_pair_field:
+        extra_cols.append(family_pair_field)
     extra_cols = list(dict.fromkeys(extra_cols))
 
     reviewer_note_fields = [f"{notes_base}__{username}" for username in reviewers.keys()]
@@ -591,6 +596,12 @@ def import_csv_to_db(
         preserve_columns.add(rating_base)
     if recommend_base:
         preserve_columns.add(recommend_base)
+    if assignment_field:
+        preserve_columns.add(assignment_field)
+    if family_field:
+        preserve_columns.add(family_field)
+    if family_pair_field:
+        preserve_columns.add(family_pair_field)
     preserve_columns.update(reviewer_note_fields)
     preserve_columns.update(reviewer_rating_fields)
     preserve_columns.update(reviewer_recommend_fields)
@@ -656,6 +667,7 @@ def import_csv_to_db(
             cfg["review"].get("recommendation_field", "review_recommendation"),
             cfg["review"].get("assignment_field", "role_assignment"),
             cfg["review"].get("family_field", "family_group"),
+            cfg["review"].get("family_pair_field", "family_pod"),
             "ai_score",
             "summary",
             "gpa_flag",

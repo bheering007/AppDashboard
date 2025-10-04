@@ -36,6 +36,7 @@ review:
   recommendation_field: review_recommendation
   assignment_field: role_assignment
   family_field: family_group
+  family_pair_field: family_pod
 family:
   names:
     - Rev

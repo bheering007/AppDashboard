@@ -1595,6 +1595,32 @@ with staffing_tab:
         return role_lookup.get(value.lower(), value)
 
     st.subheader("Role Assignment Board")
+    filter_cols = st.columns(4)
+    with filter_cols[0]:
+        assignment_role_filter = st.multiselect(
+            "Filter by role",
+            options=ROLE_NAMES,
+            key="assignment_role_filter",
+        )
+    family_filter_options = family_names + ["Unassigned"]
+    with filter_cols[1]:
+        assignment_family_filter = st.multiselect(
+            "Filter by family",
+            options=family_filter_options,
+            key="assignment_family_filter",
+        )
+    with filter_cols[2]:
+        assignment_status_filter = st.multiselect(
+            "Filter by status",
+            options=sorted(df[status_col].dropna().astype(str).unique()),
+            key="assignment_status_filter",
+        )
+    with filter_cols[3]:
+        assignment_unassigned_only = st.checkbox(
+            "Unassigned only",
+            key="assignment_unassigned_only",
+        )
+
     eligible_statuses = {"yes", "strong yes", "maybe"}
     if assignment_field not in df.columns:
         df[assignment_field] = ""
@@ -1603,24 +1629,57 @@ with staffing_tab:
         st.caption("No eligible applicants yet. Update review statuses to yes/strong yes/maybe to manage assignments.")
     else:
         assignment_subset[assignment_field] = assignment_subset[assignment_field].apply(canonical_role)
-        board_df = assignment_subset[[
+        if family_field in assignment_subset.columns:
+            assignment_subset[family_field] = assignment_subset[family_field].apply(normalize_family)
+        assignment_view = assignment_subset.copy()
+        if assignment_role_filter:
+            allowed_roles = {role.lower() for role in assignment_role_filter}
+            assignment_view = assignment_view[
+                assignment_view[assignment_field].astype(str).str.lower().isin(allowed_roles)
+            ]
+        if assignment_family_filter and family_field in assignment_view.columns:
+            family_series = assignment_view[family_field].astype(str)
+            masks = []
+            selected_families = {name.lower() for name in assignment_family_filter if name != "Unassigned"}
+            if selected_families:
+                masks.append(family_series.str.lower().isin(selected_families))
+            if "Unassigned" in assignment_family_filter:
+                masks.append(family_series == "")
+            if masks:
+                combined_mask = masks[0]
+                for mask in masks[1:]:
+                    combined_mask = combined_mask | mask
+                assignment_view = assignment_view[combined_mask]
+        if assignment_status_filter:
+            allowed_statuses = {status.lower() for status in assignment_status_filter}
+            assignment_view = assignment_view[
+                assignment_view[status_col].astype(str).str.lower().isin(allowed_statuses)
+            ]
+        if assignment_unassigned_only:
+            assignment_view = assignment_view[assignment_view[assignment_field] == ""]
+
+        board_df = assignment_view[[
             unique_key,
             "First Name",
             "Last Name",
             status_col,
             score_col,
             assignment_field,
+            family_field if family_field in assignment_view.columns else None,
         ]].copy()
+        if family_field not in board_df.columns:
+            board_df[family_field] = ""
         board_df.rename(columns={
             "First Name": "First",
             "Last Name": "Last",
             status_col: "Status",
             score_col: "Fit score",
             assignment_field: "Assigned role",
+            family_field: "Family",
         }, inplace=True)
         board_df["Candidate"] = board_df["First"].fillna("") + " " + board_df["Last"].fillna("")
         board_df.drop(columns=["First", "Last"], inplace=True)
-        board_df = board_df[[unique_key, "Candidate", "Status", "Fit score", "Assigned role"]]
+        board_df = board_df[[unique_key, "Candidate", "Status", "Fit score", "Assigned role", "Family"]]
         board_df.set_index(unique_key, inplace=True)
         original_assignments = {
             key: canonical_role(value)
@@ -1638,6 +1697,7 @@ with staffing_tab:
                     options=[""] + ROLE_NAMES,
                     help="Choose a target role or leave blank to keep unassigned.",
                 ),
+                "Family": st.column_config.TextColumn("Family", disabled=True),
             },
         )
         edited_df["Assigned role"] = edited_df["Assigned role"].apply(canonical_role)
@@ -1704,6 +1764,56 @@ with staffing_tab:
                 st.markdown("<p style='margin:0;'>No assignments yet.</p></div>", unsafe_allow_html=True)
 
     st.divider()
+
+    st.subheader("Candidate Quick View")
+    profile_options = {
+        row[unique_key]: f"{row.get('First Name', '')} {row.get('Last Name', '')} • {row.get(assignment_field, '') or 'Unassigned'}"
+        for _, row in df.sort_values("Last Name", na_position="last").iterrows()
+    }
+    selected_profile = st.selectbox(
+        "Select candidate",
+        options=[None] + list(profile_options.keys()),
+        format_func=lambda val: profile_options.get(val, "(select)") if val else "(select)",
+        key="staffing_profile_select",
+    )
+    if selected_profile:
+        profile_row = df[df[unique_key] == selected_profile].iloc[0]
+        profile_cols = st.columns([2, 1])
+        with profile_cols[0]:
+            st.markdown(
+                f"### {profile_row.get('First Name', '')} {profile_row.get('Last Name', '')}"
+            )
+            st.write(f"**Status:** {profile_row.get(status_col, '(none)')}")
+            role_preferences = []
+            for role in ROLE_NAMES:
+                pref_val = profile_row.get(f"{role}__pref", "")
+                role_preferences.append(f"{role}: {pref_val or '—'}")
+            st.write("**Role rankings:** " + ", ".join(role_preferences))
+            if assignment_field in profile_row:
+                st.write(f"**Assigned role:** {profile_row.get(assignment_field, '—') or '—'}")
+            if family_field in profile_row:
+                st.write(f"**Family:** {profile_row.get(family_field, '—') or '—'}")
+            if family_pair_field in profile_row:
+                st.write(f"**Family pod:** {profile_row.get(family_pair_field, '—') or '—'}")
+        with profile_cols[1]:
+            st.metric("Fit score", profile_row.get(score_col, '—'))
+            st.metric("AI flag", profile_row.get(ai_col, '—'))
+            st.metric("GPA flag", profile_row.get("gpa_flag", '—'))
+        shared_note = str(profile_row.get(notes_col, "") or "").strip()
+        if shared_note:
+            st.markdown("**Shared note**")
+            st.write(shared_note)
+        personal_note = str(profile_row.get(user_note_col, "") or "").strip() if user_note_col else ""
+        if personal_note:
+            st.markdown("**My notes**")
+            st.write(personal_note)
+        interview_summary = str(profile_row.get(user_interview_summary_col, "") or "").strip() if user_interview_summary_col else ""
+        if interview_summary:
+            st.markdown("**Interview summary**")
+            st.write(interview_summary)
+        st.divider()
+
+    st.divider()
     final_statuses = {"yes", "strong yes"}
     if family_field not in df.columns:
         df[family_field] = ""
@@ -1721,55 +1831,86 @@ with staffing_tab:
             "Last Name",
             status_col,
             score_col,
+            assignment_field,
             family_field,
+            family_pair_field,
         ]].copy()
         family_board.rename(columns={
             "First Name": "First",
             "Last Name": "Last",
             status_col: "Status",
             score_col: "Fit score",
+            assignment_field: "Assigned role",
             family_field: "Family",
+            family_pair_field: "Family pod",
         }, inplace=True)
         family_board["Candidate"] = family_board["First"].fillna("") + " " + family_board["Last"].fillna("")
         family_board.drop(columns=["First", "Last"], inplace=True)
-        family_board = family_board[[unique_key, "Candidate", "Status", "Fit score", "Family"]]
+        family_board["Family"] = family_board["Family"].apply(normalize_family)
+        family_board["Family pod"] = family_board["Family pod"].apply(lambda v: str(v or "").strip())
+        family_board = family_board[[unique_key, "Candidate", "Status", "Fit score", "Assigned role", "Family", "Family pod"]]
         family_board.set_index(unique_key, inplace=True)
-        original_family = {key: normalize_family(value) for key, value in family_board["Family"].to_dict().items()}
+
+        family_filter_col, _ = st.columns([1, 3])
+        with family_filter_col:
+            pairing_family_filter = st.selectbox(
+                "Highlight family",
+                options=["All"] + family_names,
+                key="pairing_family_filter",
+            )
+        pairing_view = family_board.copy()
+        if pairing_family_filter != "All":
+            pairing_view = pairing_view[pairing_view["Family"].str.lower() == pairing_family_filter.lower()]
+
+        original_family = {key: row["Family"] for key, row in pairing_view.iterrows()}
+        original_pod = {key: row["Family pod"] for key, row in pairing_view.iterrows()}
+
         edited_family = st.data_editor(
-            family_board,
+            pairing_view,
             hide_index=False,
             key="family_assignment_editor",
             column_config={
                 "Fit score": st.column_config.NumberColumn(format="%.2f"),
-                "Family": st.column_config.SelectboxColumn(
-                    "Family",
-                    options=[""] + family_names,
-                    help="Choose the family group for this staff member.",
+                "Assigned role": st.column_config.TextColumn("Assigned role", disabled=True),
+                "Family": st.column_config.SelectboxColumn("Family", options=family_names, help="Choose the family group for this staff member."),
+                "Family pod": st.column_config.TextColumn(
+                    "Family pod",
+                    help="Label pairings or pods within the family (e.g., Counselor Pod 1).",
+                    placeholder="Enter pairing",
                 ),
             },
         )
         edited_family["Family"] = edited_family["Family"].apply(normalize_family)
-        family_updates = {
-            key: value
-            for key, value in edited_family["Family"].to_dict().items()
-            if original_family.get(key, "") != value
-        }
-        if family_updates:
+        edited_family["Family pod"] = edited_family["Family pod"].apply(lambda v: str(v or "").strip())
+
+        combined_updates = {}
+        for key, row in edited_family.iterrows():
+            payload = {}
+            new_family = row.get("Family", "")
+            new_pod = row.get("Family pod", "")
+            if original_family.get(key, "") != new_family:
+                payload[family_field] = new_family
+            if family_pair_field and original_pod.get(key, "") != new_pod:
+                payload[family_pair_field] = new_pod
+            if payload:
+                combined_updates[key] = payload
+
+        if combined_updates:
             with st.spinner("Saving family placements..."):
-                for key, value in family_updates.items():
+                for key, update_payload in combined_updates.items():
                     update_review(
                         db_path=cfg["database"]["path"],
                         table=cfg["database"]["table"],
                         unique_key=unique_key,
                         keyval=key,
-                        updates={family_field: value},
+                        updates=update_payload,
                         csv_path=csv_write_target if cfg["csv"].get("write_back", True) else None,
                         skiprows=cfg["csv"].get("skiprows", 0),
                         actor=current_user,
                     )
                 snapshot_review_data(cfg, event="family-update")
                 st.session_state["data_version"] += 1
-                st.session_state["family_message"] = f"Updated {len(family_updates)} family placements."
+                st.session_state["family_message"] = f"Updated {len(combined_updates)} family placements."
                 load_dataframe.clear()
                 trigger_rerun()
 
@@ -1793,7 +1934,10 @@ with staffing_tab:
                 if str(row.get('gpa_flag', '')).upper() == 'LOW':
                     badges.append('📉')
                 assignment_badge = format_role_badge(row.get(assignment_field, ''))
+                pod_badge = str(row.get(family_pair_field, "").strip()) if family_pair_field in row else ""
                 badge_text = ' '.join(badges) + (f" {assignment_badge}" if assignment_badge != '—' else '')
+                if pod_badge:
+                    badge_text = f"{badge_text} | Pod: {pod_badge}" if badge_text else f"Pod: {pod_badge}"
                 seat_cards.append(
                     f"<div class='seat-card filled' style='border-left: 5px solid {accent_color};'>"
                     f"<div><strong>{row.get('First Name', '')} {row.get('Last Name', '')}</strong></div>"
@@ -1804,3 +1948,18 @@ with staffing_tab:
                     f"<div class='seat-card empty' style='border-left: 5px dashed {accent_color}; color: rgba(120,120,120,0.8);'>Open Seat</div>"
                 )
             st.markdown("<div class='seat-grid'>" + ''.join(seat_cards) + "</div>", unsafe_allow_html=True)
+
+    st.divider()
+    st.subheader("Family vs Role Matrix")
+    if family_subset.empty:
+        st.caption("No confirmed staff yet.")
+    else:
+        heatmap_df = pd.crosstab(
+            family_subset[family_field].apply(normalize_family),
+            family_subset[assignment_field].apply(canonical_role),
+        )
+        if heatmap_df.empty:
+            st.caption("No role assignments yet.")
+        else:
+            styled_heat = heatmap_df.style.background_gradient(cmap="Blues")
+            st.dataframe(styled_heat, use_container_width=True)
