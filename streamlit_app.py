@@ -19,6 +19,8 @@ from app_review import (
     update_review,
 )
 
+from position_rankings import render_position_rankings_section
+
 st.set_page_config(page_title="NMC Applications", layout="wide")
 
 BADGE_PREFIX = "badge__"
@@ -210,6 +212,112 @@ def load_dataframe(
 
 def prepare_dataframe(df: pd.DataFrame, cfg: Dict) -> pd.DataFrame:
     df = df.copy()
+    first_name_col = "First Name"
+    last_name_col = "Last Name"
+    username_col = "Username"
+    name_fields = cfg.get("fields", {}).get("name_fields", []) or []
+    fallback_name_fields = [field for field in name_fields if field not in {first_name_col, last_name_col}]
+
+    def _parse_name(value: str) -> tuple[str | None, str | None]:
+        value = (value or "").strip()
+        if not value:
+            return None, None
+        if "," in value:
+            last, first = [part.strip() for part in value.split(",", 1)]
+            return first or None, last or None
+        parts = value.split()
+        if len(parts) >= 2:
+            return parts[0], " ".join(parts[1:])
+        if len(parts) == 1:
+            return parts[0], None
+        return None, None
+
+    # Create full name column for better display
+    df["Full Name"] = ""
+    
+    if fallback_name_fields:
+        for idx, row in df.iterrows():
+            first_current = str(row.get(first_name_col, "") or "").strip()
+            last_current = str(row.get(last_name_col, "") or "").strip()
+            username = str(row.get(username_col, "") or "").strip()
+            
+            original_first = first_current
+            original_last = last_current
+            
+            # If we have both names, we can skip extraction
+            if first_current and last_current:
+                df.at[idx, "Full Name"] = f"{first_current} {last_current}"
+                if username:
+                    df.at[idx, "Full Name"] = f"{first_current} {last_current} ({username})"
+                continue
+                
+            # Try to extract from specified name fields
+            for field in fallback_name_fields:
+                raw_value = str(row.get(field, "") or "").strip()
+                if not raw_value:
+                    continue
+                first_candidate, last_candidate = _parse_name(raw_value)
+                if not first_current and first_candidate:
+                    first_current = first_candidate
+                if not last_current and last_candidate:
+                    last_current = last_candidate
+                if first_current and last_current:
+                    break
+            
+            # Try to extract from any field with "name" in it
+            if not (first_current and last_current):
+                for field in df.columns:
+                    if "name" in field.lower() and field not in [first_name_col, last_name_col, "Full Name"]:
+                        raw_value = str(row.get(field, "") or "").strip()
+                        if not raw_value:
+                            continue
+                        first_candidate, last_candidate = _parse_name(raw_value)
+                        if not first_current and first_candidate:
+                            first_current = first_candidate
+                        if not last_current and last_candidate:
+                            last_current = last_candidate
+                        if first_current and last_current:
+                            break
+            
+            # Handle cases where we have only one name part
+            if first_current and not last_current:
+                parts = first_current.split()
+                if len(parts) >= 2:
+                    first_current = parts[0]
+                    last_current = " ".join(parts[1:])
+            elif last_current and not first_current:
+                parts = last_current.split()
+                if len(parts) >= 2:
+                    first_current = " ".join(parts[:-1])
+                    last_current = parts[-1]
+            
+            # If we still have no name but have a username, use that
+            if not first_current and not last_current and username:
+                first_current = username
+            
+            # Update the dataframe with our findings
+            if first_current and first_current != original_first:
+                df.at[idx, first_name_col] = first_current
+            if last_current and last_current != original_last:
+                df.at[idx, last_name_col] = last_current
+                
+            # Build the full name display
+            full_name = ""
+            if first_current and last_current:
+                full_name = f"{first_current} {last_current}"
+            elif first_current:
+                full_name = first_current
+            elif last_current:
+                full_name = last_current
+            elif username:
+                full_name = username
+            else:
+                full_name = "Unknown"
+                
+            if username and (first_current or last_current):
+                full_name += f" ({username})"
+                
+            df.at[idx, "Full Name"] = full_name
     unique_key = cfg["database"]["unique_key"]
     if unique_key in df.columns:
         df[unique_key] = df[unique_key].astype(str)
@@ -371,8 +479,18 @@ def format_option_label(row: pd.Series, cfg: Dict) -> str:
     status_col = cfg["review"]["status_field"]
     first_name = row.get("First Name", "")
     last_name = row.get("Last Name", "")
+    username = row.get("Username", "")
     status = row.get(status_col, "").upper() or "UNREVIEWED"
-    return f"{row[cfg['database']['unique_key']]} – {first_name} {last_name} ({status})"
+    
+    name_display = f"{first_name} {last_name}"
+    if username and name_display.strip():
+        name_display = f"{name_display} ({username})"
+    elif username and not name_display.strip():
+        name_display = username
+    elif not name_display.strip():
+        name_display = "Unknown"
+        
+    return f"{row[cfg['database']['unique_key']]} – {name_display} ({status})"
 
 
 def render_badges(row: pd.Series, badge_map: Dict[str, str]) -> None:
@@ -398,8 +516,11 @@ def render_role_table(df: pd.DataFrame, role: str, cfg: Dict) -> None:
     score_col = score_col_raw if score_col_raw and score_col_raw in df.columns else None
     status_col = cfg["review"]["status_field"]
     recommend_base = cfg["review"].get("recommendation_field", "review_recommendation")
+    
+    # Include username in display columns
     display_cols = [
         cfg["database"]["unique_key"],
+        "Username",
         "First Name",
         "Last Name",
         f"{role}__pref",
@@ -409,19 +530,81 @@ def render_role_table(df: pd.DataFrame, role: str, cfg: Dict) -> None:
         "gpa_flag",
     ]
     display_cols = [col for col in display_cols if col in df.columns]
+    
     if not display_cols:
         st.info("No data available for this role yet.")
         return
+    
     data = df.copy()
     pref_col = f"{role}__pref"
+    
     if pref_col in data.columns:
         normalized = data[pref_col].astype(str).str.strip().str.lower()
         data = data[~normalized.isin({"", "nan", "none", "null"})]
+        
+        # Sort by preference rank
+        try:
+            # Convert preference to numeric for sorting
+            data[f"{role}__pref_num"] = pd.to_numeric(data[pref_col], errors="coerce")
+            data = data.sort_values(by=f"{role}__pref_num", ascending=True)
+            
+            # Color code preference ranks for better visualization
+            def highlight_pref(val):
+                if val == '1':
+                    return 'background-color: #d1fae5'  # light green
+                elif val == '2':
+                    return 'background-color: #e0f2fe'  # light blue
+                elif val == '3':
+                    return 'background-color: #fef3c7'  # light yellow
+                return ''
+                
+            # Drop the numeric column as we don't need to display it
+            if f"{role}__pref_num" in data.columns:
+                data = data.drop(columns=[f"{role}__pref_num"])
+                
+        except Exception:
+            pass  # If sorting fails, continue with unsorted data
+    
     if data.empty:
         st.info("No applicants ranked this role yet.")
         return
+        
+    # Add sorting options
+    sort_option = st.radio(
+        f"Sort {role} list by:",
+        ["Preference Rank", "Name", "Review Status"],
+        horizontal=True,
+        key=f"sort_{role}"
+    )
+    
+    if sort_option == "Preference Rank":
+        pass  # Already sorted above
+    elif sort_option == "Name":
+        # Sort by Last Name, First Name
+        if "Last Name" in data.columns and "First Name" in data.columns:
+            data = data.sort_values(by=["Last Name", "First Name"])
+    elif sort_option == "Review Status":
+        # Sort by review status
+        if status_col in data.columns:
+            data = data.sort_values(by=status_col)
+    
     st.dataframe(data[display_cols], use_container_width=True, hide_index=True)
+    
     if not data.empty:
+        # Add a count of applicants by preference rank
+        pref_counts = data[pref_col].value_counts().sort_index()
+        st.write(f"#### {role} Preference Counts:")
+        
+        # Display counts in columns
+        cols = st.columns(len(pref_counts) + 1)
+        cols[0].metric("Total", len(data))
+        
+        idx = 1
+        for rank, count in pref_counts.items():
+            if idx < len(cols):
+                cols[idx].metric(f"Rank #{rank}", count)
+                idx += 1
+        
         csv_export = data[display_cols].to_csv(index=False).encode("utf-8")
         st.download_button(
             f"Download {role} shortlist",
@@ -494,7 +677,6 @@ raw_df = load_dataframe(
     db_token,
 )
 df = prepare_dataframe(raw_df, cfg)
-score_col = None
 score_col = score_col_raw if score_col_raw and score_col_raw in df.columns else None
 pending_mask_all = reviewer_pending_mask(df, reviewer_personal_cols)
 badge_map = badge_columns(df)
@@ -583,6 +765,8 @@ with st.sidebar:
 
     process_upload(upload)
 
+    ranking_sort = "Default order"
+
     st.divider()
     with st.expander("Filter applicants", expanded=False):
         search_text = st.text_input(
@@ -608,6 +792,17 @@ with st.sidebar:
             badge_label,
             options=list(badge_map.keys()),
             format_func=lambda key: badge_map[key],
+        )
+        ranking_sort = st.selectbox(
+            "Ranking sort",
+            options=[
+                "Default order",
+                "Ranked applicants first",
+                "Unranked applicants first",
+            ],
+            index=0,
+            help="Move applicants who ranked at least one role to the top or bottom of the table.",
+            key="ranking_sort_mode",
         )
 
     st.divider()
@@ -674,9 +869,72 @@ filtered_df = filtered_dataframe(
     role_focus=role_focus,
     role_pref_rule=role_pref_rule,
 )
+
+pref_columns = [col for col in filtered_df.columns if col.endswith("__pref")]
+if pref_columns:
+    def _pref_count(row: pd.Series) -> int:
+        return sum(str(row.get(col, "")).strip() not in {"", "nan", "none", "null"} for col in pref_columns)
+
+    def _top_ranked_roles(row: pd.Series) -> str:
+        ranked_roles = []
+        for role in ROLE_NAMES:
+            col = f"{role}__pref"
+            value = str(row.get(col, "")).strip()
+            if value == "1":
+                ranked_roles.append(role)
+        return ", ".join(ranked_roles)
+        
+    def _all_role_prefs(row: pd.Series) -> str:
+        """Format all role preferences for display"""
+        role_prefs = []
+        for role in ROLE_NAMES:
+            col = f"{role}__pref"
+            value = str(row.get(col, "")).strip()
+            if value and value not in {"nan", "none", "null"}:
+                role_prefs.append(f"{role}: #{value}")
+        return " | ".join(role_prefs) if role_prefs else "None"
+
+    filtered_df["Pref count"] = filtered_df.apply(_pref_count, axis=1)
+    filtered_df["Top ranked roles"] = filtered_df.apply(_top_ranked_roles, axis=1)
+    filtered_df["All role preferences"] = filtered_df.apply(_all_role_prefs, axis=1)
+    
+    # Add individual preference rank columns for easier filtering/sorting
+    for role in ROLE_NAMES:
+        role_short = role.split()[0]  # Just use first word of role for column name
+        col_name = f"{role_short} Rank"
+        
+        def _get_rank_for_role(row, role=role):
+            pref_col = f"{role}__pref"
+            value = str(row.get(pref_col, "")).strip()
+            if value and value not in {"nan", "none", "null"}:
+                return value
+            return ""
+            
+        filtered_df[col_name] = filtered_df.apply(_get_rank_for_role, axis=1)
+else:
+    filtered_df["Pref count"] = 0
+    filtered_df["Top ranked roles"] = ""
+    filtered_df["All role preferences"] = "None"
+    for role in ROLE_NAMES:
+        role_short = role.split()[0]
+        filtered_df[f"{role_short} Rank"] = ""
 pending_only_active = st.session_state.get("pending_only_filter", False)
 if pending_only_active and not filtered_df.empty:
     filtered_df = filtered_df[reviewer_pending_mask(filtered_df, reviewer_personal_cols)]
+
+if ranking_sort in {"Ranked applicants first", "Unranked applicants first"} and not filtered_df.empty:
+    ascending = ranking_sort == "Unranked applicants first"
+    sort_cols = ["Pref count"]
+    sort_orders = [ascending]
+    if "_rating_avg_numeric" in filtered_df.columns:
+        sort_cols.append("_rating_avg_numeric")
+        sort_orders.append(False)
+    if "_ai_numeric" in filtered_df.columns:
+        sort_cols.append("_ai_numeric")
+        sort_orders.append(True)
+    filtered_df = filtered_df.sort_values(by=sort_cols, ascending=sort_orders, ignore_index=True)
+else:
+    filtered_df = filtered_df.reset_index(drop=True)
 
 unique_key = cfg["database"]["unique_key"]
 
@@ -755,7 +1013,7 @@ if family_field in filtered_df.columns:
 else:
     filtered_df["Family tag"] = "—"
 
-review_tab, staffing_tab = st.tabs(["Review Dashboard", "Staffing Boards"])
+review_tab, position_rankings_tab, staffing_tab = st.tabs(["Review Dashboard", "Position Rankings", "Staffing Boards"])
 
 with review_tab:
     col_metrics = st.columns(5)
@@ -796,6 +1054,8 @@ with review_tab:
         status_col,
         "Role tag",
         "Family tag",
+        "Pref count",
+        "Top ranked roles",
         notes_col,
         "summary",
     ])
@@ -1551,6 +1811,9 @@ with review_tab:
     else:
         st.dataframe(audit_df, use_container_width=True, hide_index=True)
 
+with position_rankings_tab:
+    render_position_rankings_section(filtered_df, ROLE_NAMES, cfg)
+
 with staffing_tab:
     if "staffing_css_loaded" not in st.session_state:
         st.markdown(
@@ -1982,3 +2245,8 @@ with staffing_tab:
             st.caption("No role assignments yet.")
         else:
             st.dataframe(heatmap_df, use_container_width=True)
+
+
+
+
+

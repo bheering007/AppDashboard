@@ -402,9 +402,82 @@ def prepare_enriched_frame(df: pd.DataFrame, cfg: Dict) -> pd.DataFrame:
     assignment_field = cfg["review"].get("assignment_field", "role_assignment")
     family_pair_field = cfg["review"].get("family_pair_field", "family_pod")
     family_field = cfg["review"].get("family_field", "family_group")
-    family_pair_field = cfg["review"].get("family_pair_field", "family_pod")
     if recommend_base and recommend_base not in df.columns:
         df[recommend_base] = ""
+
+    first_name_col = "First Name"
+    last_name_col = "Last Name"
+    name_fields = cfg.get("fields", {}).get("name_fields", []) or []
+    fallback_name_fields = [field for field in name_fields if field not in {first_name_col, last_name_col}]
+
+    def _parse_name(value: str) -> tuple[str | None, str | None]:
+        value = (value or "").strip()
+        if not value:
+            return None, None
+        if "," in value:
+            last, first = [part.strip() for part in value.split(",", 1)]
+            return first or None, last or None
+        parts = value.split()
+        if len(parts) >= 2:
+            return parts[0], " ".join(parts[1:])
+        if len(parts) == 1:
+            return parts[0], None
+        return None, None
+
+    if fallback_name_fields:
+        for idx, row in df.iterrows():
+            first_current = str(row.get(first_name_col, "") or "").strip()
+            last_current = str(row.get(last_name_col, "") or "").strip()
+            username = str(row.get("Username", "") or "").strip()
+            
+            if first_current and last_current:
+                continue
+                
+            for field in fallback_name_fields:
+                raw_value = str(row.get(field, "") or "").strip()
+                if not raw_value:
+                    continue
+                first_candidate, last_candidate = _parse_name(raw_value)
+                if not first_current and first_candidate:
+                    first_current = first_candidate
+                if not last_current and last_candidate:
+                    last_current = last_candidate
+                if first_current and last_current:
+                    break
+                    
+            # If we still don't have both names, try to extract from any full name field
+            if not (first_current and last_current):
+                for field in df.columns:
+                    if "name" in field.lower() and field not in [first_name_col, last_name_col]:
+                        raw_value = str(row.get(field, "") or "").strip()
+                        if not raw_value:
+                            continue
+                        first_candidate, last_candidate = _parse_name(raw_value)
+                        if not first_current and first_candidate:
+                            first_current = first_candidate
+                        if not last_current and last_candidate:
+                            last_current = last_candidate
+                        if first_current and last_current:
+                            break
+                            
+            # Intelligent splitting of single name field
+            if first_current and not last_current:
+                parts = first_current.split()
+                if len(parts) >= 2:
+                    first_current = parts[0]
+                    last_current = " ".join(parts[1:])
+            elif last_current and not first_current:
+                parts = last_current.split()
+                if len(parts) >= 2:
+                    first_current = " ".join(parts[:-1])
+                    last_current = parts[-1]
+                    
+            # If we still don't have a name but have username, use that
+            if not first_current and not last_current and username:
+                first_current = username
+                
+            df.at[idx, first_name_col] = first_current
+            df.at[idx, last_name_col] = last_current
     for username in reviewers.keys():
         note_col = f"{notes_base}__{username}"
         if note_col not in df.columns:
@@ -477,7 +550,6 @@ def import_csv_to_db(
     extra_cols = [
         cfg["review"]["status_field"],
         cfg["review"]["notes_field"],
-        cfg["review"]["rubric_score_field"],
         cfg["review"]["ai_flag_field"],
         cfg["review"].get("rating_field", "review_score"),
         cfg["review"].get("recommendation_field", "review_recommendation"),
@@ -611,7 +683,6 @@ def import_csv_to_db(
         review_fields = [
             cfg["review"]["status_field"],
             cfg["review"]["notes_field"],
-            cfg["review"]["rubric_score_field"],
             cfg["review"]["ai_flag_field"],
             cfg["review"].get("rating_field", "review_score"),
             cfg["review"].get("recommendation_field", "review_recommendation"),
