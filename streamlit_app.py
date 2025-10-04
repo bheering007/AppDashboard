@@ -698,8 +698,29 @@ if not family_names:
 role_badge_symbols = ["🟦", "🟩", "🟧", "🟥", "🟪", "🟨", "🟫", "⬛"]
 role_badge_map = {role: role_badge_symbols[idx % len(role_badge_symbols)] for idx, role in enumerate(ROLE_NAMES)}
 
-family_badge_symbols = ["🟪", "🟫", "⬜", "⬛", "🟦", "🟩", "🟥", "🟧", "🟨"]
-family_badge_map = {name: family_badge_symbols[idx % len(family_badge_symbols)] for idx, name in enumerate(family_names)}
+PRESET_FAMILY_COLORS = {
+    "rev": ("🟪", "#8b5cf6"),
+    "collegian": ("🟨", "#facc15"),
+    "tonk": ("🟥", "#f87171"),
+    "cadets": ("🟩", "#34d399"),
+    "ptolomy": ("🟦", "#60a5fa"),
+    "ptolemy": ("🟦", "#60a5fa"),
+    "maroons": ("🟧", "#fb923c"),
+}
+fallback_family_symbols = ["⬜", "⬛", "🟪", "🟧", "🟩", "🟦", "🟥", "🟨", "🟫"]
+family_badge_map: dict[str, str] = {}
+family_color_map: dict[str, str] = {}
+for idx, name in enumerate(family_names):
+    key = name.lower()
+    if key in PRESET_FAMILY_COLORS:
+        symbol, color = PRESET_FAMILY_COLORS[key]
+    else:
+        symbol = fallback_family_symbols[idx % len(fallback_family_symbols)]
+        color = "#9ca3af"
+    family_badge_map[name] = symbol
+    family_badge_map[key] = symbol
+    family_color_map[name] = color
+    family_color_map[key] = color
 
 def format_role_badge(role_value: str) -> str:
     value = str(role_value or "").strip()
@@ -712,7 +733,7 @@ def format_family_badge(family_value: str) -> str:
     value = str(family_value or "").strip()
     if not value:
         return "—"
-    symbol = family_badge_map.get(value, "▪️")
+    symbol = family_badge_map.get(value, family_badge_map.get(value.lower(), "▪️"))
     return f"{symbol} {value}"
 
 if assignment_field in filtered_df.columns:
@@ -1681,6 +1702,7 @@ with staffing_tab:
             if score_col in members.columns:
                 members.sort_values(score_col, ascending=False, inplace=True)
             seat_cards = []
+            accent_color = family_color_map.get(family_name, family_color_map.get(family_name.lower(), "#2f9d5d"))
             for _, row in members.iterrows():
                 badges = []
                 if str(row.get(ai_col, '')).upper() == 'YES':
@@ -1690,10 +1712,12 @@ with staffing_tab:
                 assignment_badge = format_role_badge(row.get(assignment_field, ''))
                 badge_text = ' '.join(badges) + (f" {assignment_badge}" if assignment_badge != '—' else '')
                 seat_cards.append(
-                    "<div class='seat-card filled'>"
+                    f"<div class='seat-card filled' style='border-left: 5px solid {accent_color};'>"
                     f"<div><strong>{row.get('First Name', '')} {row.get('Last Name', '')}</strong></div>"
                     f"<div class='badges'>{badge_text.strip() or '—'}</div></div>"
                 )
             for _ in range(capacity - len(members)):
-                seat_cards.append("<div class='seat-card empty'>Open Seat</div>")
+                seat_cards.append(
+                    f"<div class='seat-card empty' style='border-left: 5px dashed {accent_color}; color: rgba(120,120,120,0.8);'>Open Seat</div>"
+                )
             st.markdown("<div class='seat-grid'>" + ''.join(seat_cards) + "</div>", unsafe_allow_html=True)
