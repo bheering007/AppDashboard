@@ -1048,14 +1048,24 @@ else:
                     pref_label = f"# {pref_value}" if pref_value else "—"
                     fit_label = fit_value if fit_value else "—"
                     role_summaries.append(f"{role}: pref {pref_label} · fit {fit_label}")
-            if role_summaries:
-                st.caption("Role interest snapshot")
-                for line in role_summaries:
-                    st.write(line)
-            summary_text = str(display_row.get("summary", "") or "").strip()
-            if summary_text:
-                st.markdown("**AI summary**")
-                st.write(summary_text)
+        if role_summaries:
+            st.caption("Role interest snapshot")
+            for line in role_summaries:
+                st.write(line)
+        summary_text = str(display_row.get("summary", "") or "").strip()
+        if summary_text:
+            st.markdown("**AI summary**")
+            st.write(summary_text)
+        text_questions = cfg.get("fields", {}).get("text_fields", [])
+        if text_questions:
+            st.markdown("**Application responses**")
+            for question in text_questions:
+                answer = str(display_row.get(question, "") or "").strip()
+                with st.expander(question, expanded=False):
+                    if answer:
+                        st.write(answer)
+                    else:
+                        st.caption("No response provided.")
 
         with my_review_tab:
             st.caption("Updates save automatically when you interact with the controls.")

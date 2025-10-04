@@ -343,24 +343,47 @@ def extract_gpa_flag(row: pd.Series, threshold: float) -> str:
 
 
 def infer_role_preference(row: pd.Series, role: str) -> Optional[int]:
-    cols = [c for c in row.index if role.lower() in c.lower() and "please rank" in c.lower()]
+    role_lower = role.lower()
+    target_words = {"please rank", "rank", "preference", "preferred"}
+    cols = [
+        col
+        for col in row.index
+        if role_lower in col.lower() and any(token in col.lower() for token in target_words)
+    ]
 
-    def has_mark(target: int) -> bool:
-        suffices = {f"- {target}", f"{chr(8211)} {target}"}
-        for col in cols:
-            col_stripped = col.strip()
-            if any(col_stripped.endswith(suf) for suf in suffices):
-                value = str(row.get(col, "")).strip()
-                if value and value.lower() not in {"nan", "n/a", ""}:
-                    return True
+    def contains_rank(value: str, target: int) -> bool:
+        if not value:
+            return False
+        stripped = value.lower().strip()
+        if stripped in {"nan", "n/a", "", "none"}:
+            return False
+        if stripped.isdigit():
+            return int(stripped) == target
+        # look for standalone digits, # or ordinal text
+        if str(target) in stripped.split():
+            return True
+        if f"#{target}" in stripped or f"no.{target}" in stripped:
+            return True
+        if stripped.endswith(str(target)):
+            return True
+        ordinal = {
+            1: {"1st", "first"},
+            2: {"2nd", "second"},
+            3: {"3rd", "third"},
+        }
+        for token in ordinal.get(target, set()):
+            if token in stripped:
+                return True
         return False
 
-    if has_mark(1):
-        return 1
-    if has_mark(2):
-        return 2
-    if has_mark(3):
-        return 3
+    if not cols:
+        return None
+
+    for target in (1, 2, 3):
+        for col in cols:
+            value = str(row.get(col, ""))
+            if contains_rank(value, target):
+                return target
     return None
 
 
