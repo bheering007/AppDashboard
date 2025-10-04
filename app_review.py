@@ -24,6 +24,19 @@ DEFAULT_BADGE_THRESHOLDS = {
 
 
 
+DEFAULT_INTERVIEW_PROMPTS = {
+    "strengths": "Strengths",
+    "concerns": "Concerns",
+    "growth": "Growth Opportunities",
+    "followups": "Follow-up Items",
+}
+DEFAULT_INTERVIEW_OUTCOMES = ["strong yes", "yes", "hold", "no"]
+DEFAULT_INTERVIEW_RATING_FIELD = "interview_rating"
+DEFAULT_INTERVIEW_OUTCOME_FIELD = "interview_outcome"
+DEFAULT_INTERVIEW_LOG_FIELD = "interview_log"
+DEFAULT_INTERVIEW_RESOURCES_FIELD = "interview_resources"
+DEFAULT_INTERVIEW_SUMMARY_FIELD = "interview_summary"
+
 def get_reviewer_profiles(cfg: Dict) -> Dict[str, Dict]:
     return cfg.get("auth", {}).get("users", {}) or {}
 
@@ -36,6 +49,58 @@ def slugify(value: str) -> str:
 # ---------------------------------------------------------------------------
 # Database utilities
 # ---------------------------------------------------------------------------
+
+
+def get_interview_definition(cfg: Dict) -> Dict[str, Dict]:
+    interview_cfg = cfg.get("interview", {}) or {}
+    prompts_cfg = interview_cfg.get("prompts", {}) or {}
+    prompt_items = []
+    used_slugs = set()
+    for key, default_label in DEFAULT_INTERVIEW_PROMPTS.items():
+        label = prompts_cfg.get(key, default_label)
+        slug = slugify(key) or slugify(label)
+        if not slug or slug in used_slugs:
+            continue
+        prompt_items.append({"key": key, "label": label, "slug": slug, "column": f"interview_{slug}"})
+        used_slugs.add(slug)
+    for key, label in prompts_cfg.items():
+        slug = slugify(key) or slugify(label)
+        if not slug or slug in used_slugs:
+            continue
+        prompt_items.append({"key": key, "label": label, "slug": slug, "column": f"interview_{slug}"})
+        used_slugs.add(slug)
+    rating_field = interview_cfg.get("rating_field", DEFAULT_INTERVIEW_RATING_FIELD)
+    outcome_field = interview_cfg.get("outcome_field", DEFAULT_INTERVIEW_OUTCOME_FIELD)
+    log_field = interview_cfg.get("log_field", DEFAULT_INTERVIEW_LOG_FIELD)
+    resources_field = interview_cfg.get("resources_field", DEFAULT_INTERVIEW_RESOURCES_FIELD)
+    summary_field = interview_cfg.get("summary_field", DEFAULT_INTERVIEW_SUMMARY_FIELD)
+    outcome_options = interview_cfg.get("outcome_options", DEFAULT_INTERVIEW_OUTCOMES)
+    summary_template = interview_cfg.get("summary_template", [])
+    questions_cfg = interview_cfg.get("question_checklist", []) or []
+    question_items = []
+    question_slugs = set()
+    for question in questions_cfg:
+        slug = slugify(question)
+        if not slug or slug in question_slugs:
+            continue
+        question_items.append({
+            "question": question,
+            "slug": slug,
+            "column": f"interview_q_{slug}",
+        })
+        question_slugs.add(slug)
+    return {
+        "prompts": prompt_items,
+        "rating_field": rating_field,
+        "outcome_field": outcome_field,
+        "log_field": log_field,
+        "resources_field": resources_field,
+        "summary_field": summary_field,
+        "outcome_options": outcome_options,
+        "summary_template": summary_template,
+        "questions": question_items,
+    }
+
 
 def init_db(db_path: str, table: str, columns: Iterable[str], unique_key: str) -> None:
     conn = sqlite3.connect(db_path)
@@ -271,7 +336,7 @@ def infer_role_preference(row: pd.Series, role: str) -> Optional[int]:
     cols = [c for c in row.index if role.lower() in c.lower() and "please rank" in c.lower()]
 
     def has_mark(target: int) -> bool:
-        suffices = {f"- {target}", f"– {target}"}
+        suffices = {f"- {target}", f"{chr(8211)} {target}"}
         for col in cols:
             col_stripped = col.strip()
             if any(col_stripped.endswith(suf) for suf in suffices):
@@ -405,6 +470,14 @@ def import_csv_to_db(
     notes_base = cfg["review"]["notes_field"]
     rating_base = cfg["review"].get("rating_field")
     recommend_base = cfg["review"].get("recommendation_field")
+    interview_def = get_interview_definition(cfg)
+    interview_prompt_bases = [item["column"] for item in interview_def["prompts"]]
+    interview_question_bases = [item["column"] for item in interview_def["questions"]]
+    interview_rating_base = interview_def["rating_field"]
+    interview_outcome_base = interview_def["outcome_field"]
+    interview_log_base = interview_def["log_field"]
+    interview_resources_base = interview_def["resources_field"]
+    interview_summary_base = interview_def["summary_field"]
     for role in ROLE_NAMES:
         extra_cols.extend([f"{role}__fit", f"{role}__pref"])
     for username in reviewers.keys():
@@ -413,6 +486,15 @@ def import_csv_to_db(
             extra_cols.append(f"{rating_base}__{username}")
         if recommend_base:
             extra_cols.append(f"{recommend_base}__{username}")
+        for base in interview_prompt_bases:
+            extra_cols.append(f"{base}__{username}")
+        extra_cols.append(f"{interview_rating_base}__{username}")
+        extra_cols.append(f"{interview_outcome_base}__{username}")
+        extra_cols.append(f"{interview_log_base}__{username}")
+        extra_cols.append(f"{interview_resources_base}__{username}")
+        extra_cols.append(f"{interview_summary_base}__{username}")
+        for base in interview_question_bases:
+            extra_cols.append(f"{base}__{username}")
     extra_cols.extend(badge_cols)
     extra_cols = list(dict.fromkeys(extra_cols))
     if not Path(db_path).exists():
@@ -424,28 +506,47 @@ def import_csv_to_db(
         if target_path != csv_path_obj and not target_path.exists():
             target_path.parent.mkdir(parents=True, exist_ok=True)
             target_path.write_bytes(csv_path_obj.read_bytes())
+        reviewer_note_fields = [f"{notes_base}__{username}" for username in reviewers.keys()]
+        reviewer_rating_fields = [f"{rating_base}__{username}" for username in reviewers.keys()] if rating_base else []
+        reviewer_recommend_fields = [f"{recommend_base}__{username}" for username in reviewers.keys()] if recommend_base else []
+        interview_prompt_fields = [f"{base}__{username}" for base in interview_prompt_bases for username in reviewers.keys()]
+        interview_rating_fields = [f"{interview_rating_base}__{username}" for username in reviewers.keys()]
+        interview_outcome_fields = [f"{interview_outcome_base}__{username}" for username in reviewers.keys()]
+        interview_log_fields = [f"{interview_log_base}__{username}" for username in reviewers.keys()]
+        interview_resource_fields = [f"{interview_resources_base}__{username}" for username in reviewers.keys()]
+        interview_summary_fields = [f"{interview_summary_base}__{username}" for username in reviewers.keys()]
+        interview_question_fields = [f"{base}__{username}" for base in interview_question_bases for username in reviewers.keys()]
+        review_fields = [
+            cfg["review"]["status_field"],
+            cfg["review"]["notes_field"],
+            cfg["review"]["rubric_score_field"],
+            cfg["review"]["ai_flag_field"],
+            cfg["review"].get("rating_field", "review_score"),
+            cfg["review"].get("recommendation_field", "review_recommendation"),
+            "ai_score",
+            "summary",
+            "gpa_flag",
+        ]
+        review_fields += badge_cols
+        review_fields += [f"{role}__fit" for role in ROLE_NAMES]
+        review_fields += [f"{role}__pref" for role in ROLE_NAMES]
+        review_fields += reviewer_note_fields
+        review_fields += reviewer_rating_fields
+        review_fields += reviewer_recommend_fields
+        review_fields += interview_prompt_fields
+        review_fields += interview_rating_fields
+        review_fields += interview_outcome_fields
+        review_fields += interview_log_fields
+        review_fields += interview_resource_fields
+        review_fields += interview_summary_fields
+        review_fields += interview_question_fields
+        review_fields = list(dict.fromkeys(review_fields))
         merge_with_master_csv(
             csv_path=str(target_path),
             skiprows=skiprows,
             unique_key=unique_key,
             enriched_df=enriched_df,
-            review_fields=[
-                cfg["review"]["status_field"],
-                cfg["review"]["notes_field"],
-                cfg["review"]["rubric_score_field"],
-                cfg["review"]["ai_flag_field"],
-                cfg["review"].get("rating_field", "review_score"),
-                cfg["review"].get("recommendation_field", "review_recommendation"),
-                "ai_score",
-                "summary",
-                "gpa_flag",
-            ]
-            + badge_cols
-            + [f"{role}__fit" for role in ROLE_NAMES]
-            + [f"{role}__pref" for role in ROLE_NAMES]
-            + [f"{notes_base}__{username}" for username in reviewers.keys()]
-            + ([f"{rating_base}__{username}" for username in reviewers.keys()] if rating_base else [])
-            + ([f"{recommend_base}__{username}" for username in reviewers.keys()] if recommend_base else []),
+            review_fields=review_fields,
         )
     return enriched_df
 

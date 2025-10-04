@@ -114,6 +114,31 @@ rubric:
       - leading
       - mentor
       - guide
+
+interview:
+  prompts:
+    strengths: Strengths
+    concerns: Concerns
+    growth: Growth Opportunities
+    followups: Follow-up Items
+  outcome_options:
+    - strong yes
+    - yes
+    - hold
+    - no
+  summary_template:
+    - "Strengths: "
+    - "Growth areas: "
+    - "Next steps: "
+  question_checklist:
+    - "Icebreaker / rapport"
+    - "Scenario: handling camper conflict"
+    - "Availability for required training dates"
+  resource_links:
+    - label: Interview Guide
+      url: https://example.com/nmc-interview-guide
+    - label: Interview Zoom Room
+      url: https://example.com/zoom-room
 ai_detection:
   use_heuristics: true
   flags_on:
