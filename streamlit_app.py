@@ -174,10 +174,13 @@ def login(auth_cfg: Dict) -> tuple[str, Dict]:
     st.stop()
 
 
-@st.cache_resource
 def get_cfg() -> Dict:
-    with open("config.yaml", "r", encoding="utf-8") as handle:
-        return yaml.safe_load(handle)
+    config_path = Path("config.yaml")
+    with config_path.open("r", encoding="utf-8") as handle:
+        data = yaml.safe_load(handle) or {}
+    # Attach the file timestamp so callers can detect changes if needed
+    data.setdefault("_meta", {})["config_mtime"] = config_path.stat().st_mtime
+    return data
 
 
 @st.cache_data(show_spinner=False)
@@ -449,6 +452,7 @@ family_cfg = cfg.get("family", {}) or {}
 raw_family_names = family_cfg.get("names") or []
 family_names = [str(name).strip() for name in raw_family_names if str(name).strip()]
 family_default_capacity = family_cfg.get("default_capacity", 12)
+family_capacities_cfg = family_cfg.get("capacities", {}) or {}
 staffing_cfg = cfg.get("staffing", {}) or {}
 role_targets_cfg = staffing_cfg.get("role_targets", {}) or {}
 interview_def = get_interview_definition(cfg)
@@ -696,6 +700,12 @@ if not family_names:
     if not family_names:
         family_names = ["Family 1", "Family 2", "Family 3", "Family 4", "Family 5"]
 
+family_name_lookup = {name.lower(): name for name in family_names}
+family_capacity_map = {
+    name: int(family_capacities_cfg.get(name, family_capacities_cfg.get(name.lower(), family_default_capacity)))
+    for name in family_names
+}
+
 role_badge_symbols = ["🟦", "🟩", "🟧", "🟥", "🟪", "🟨", "🟫", "⬛"]
 role_badge_map = {role: role_badge_symbols[idx % len(role_badge_symbols)] for idx, role in enumerate(ROLE_NAMES)}
 
@@ -723,6 +733,12 @@ for idx, name in enumerate(family_names):
     family_color_map[name] = color
     family_color_map[key] = color
 
+def normalize_family(value: str) -> str:
+    value = str(value or "").strip()
+    if not value:
+        return ""
+    return family_name_lookup.get(value.lower(), value)
+
 def format_role_badge(role_value: str) -> str:
     value = str(role_value or "").strip()
     if not value:
@@ -742,6 +758,7 @@ if assignment_field in filtered_df.columns:
 else:
     filtered_df["Role tag"] = "—"
 if family_field in filtered_df.columns:
+    filtered_df[family_field] = filtered_df[family_field].apply(normalize_family)
     filtered_df["Family tag"] = filtered_df[family_field].apply(format_family_badge)
 else:
     filtered_df["Family tag"] = "—"
@@ -1687,18 +1704,83 @@ with staffing_tab:
                 st.markdown("<p style='margin:0;'>No assignments yet.</p></div>", unsafe_allow_html=True)
 
     st.divider()
-    st.subheader("Family Seat Map")
     final_statuses = {"yes", "strong yes"}
     if family_field not in df.columns:
         df[family_field] = ""
+    else:
+        df[family_field] = df[family_field].apply(normalize_family)
     family_subset = df[df[status_col].astype(str).str.lower().isin(final_statuses)].copy()
+
+    st.subheader("Family Assignment Board")
     if family_subset.empty:
         st.caption("Once applicants are marked yes/strong yes they will appear here for family grouping.")
     else:
-        family_subset[family_field] = family_subset[family_field].apply(lambda value: next((name for name in family_names if str(value or '').strip().lower() == name.lower()), str(value or '').strip()))
+        family_board = family_subset[[
+            unique_key,
+            "First Name",
+            "Last Name",
+            status_col,
+            score_col,
+            family_field,
+        ]].copy()
+        family_board.rename(columns={
+            "First Name": "First",
+            "Last Name": "Last",
+            status_col: "Status",
+            score_col: "Fit score",
+            family_field: "Family",
+        }, inplace=True)
+        family_board["Candidate"] = family_board["First"].fillna("") + " " + family_board["Last"].fillna("")
+        family_board.drop(columns=["First", "Last"], inplace=True)
+        family_board = family_board[[unique_key, "Candidate", "Status", "Fit score", "Family"]]
+        family_board.set_index(unique_key, inplace=True)
+        original_family = {key: normalize_family(value) for key, value in family_board["Family"].to_dict().items()}
+        edited_family = st.data_editor(
+            family_board,
+            hide_index=False,
+            key="family_assignment_editor",
+            column_config={
+                "Fit score": st.column_config.NumberColumn(format="%.2f"),
+                "Family": st.column_config.SelectboxColumn(
+                    "Family",
+                    options=[""] + family_names,
+                    help="Choose the family group for this staff member.",
+                ),
+            },
+        )
+        edited_family["Family"] = edited_family["Family"].apply(normalize_family)
+        family_updates = {
+            key: value
+            for key, value in edited_family["Family"].to_dict().items()
+            if original_family.get(key, "") != value
+        }
+        if family_updates:
+            with st.spinner("Saving family placements..."):
+                for key, value in family_updates.items():
+                    update_review(
+                        db_path=cfg["database"]["path"],
+                        table=cfg["database"]["table"],
+                        unique_key=unique_key,
+                        keyval=key,
+                        updates={family_field: value},
+                        csv_path=csv_write_target if cfg["csv"].get("write_back", True) else None,
+                        skiprows=cfg["csv"].get("skiprows", 0),
+                        actor=current_user,
+                    )
+                snapshot_review_data(cfg, event="family-update")
+                st.session_state["data_version"] += 1
+                st.session_state["family_message"] = f"Updated {len(family_updates)} family placements."
+                load_dataframe.clear()
+                trigger_rerun()
+
+    st.divider()
+    st.subheader("Family Seat Map")
+    if family_subset.empty:
+        st.caption("Once applicants are marked yes/strong yes they will appear here for family grouping.")
+    else:
         for family_name in family_names:
             members = family_subset[family_subset[family_field].astype(str).str.lower() == family_name.lower()].copy()
-            capacity = max(len(members), family_default_capacity)
+            capacity = max(len(members), family_capacity_map.get(family_name, family_default_capacity))
             st.markdown(f"### {family_name} ({len(members)}/{capacity})")
             if score_col in members.columns:
                 members.sort_values(score_col, ascending=False, inplace=True)
