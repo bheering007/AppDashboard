@@ -7,6 +7,7 @@ import streamlit as st
 
 def render_position_rankings_section(filtered_df: pd.DataFrame, role_names: List[str], cfg: Dict) -> None:
     """Render the position rankings analysis section."""
+    unique_key = cfg["database"]["unique_key"]
     st.header("Position Rankings Analysis")
     
     # Count total applications with preferences
@@ -50,7 +51,6 @@ def render_position_rankings_section(filtered_df: pd.DataFrame, role_names: List
     
     # Show results
     if not filtered_by_role.empty:
-        unique_key = cfg["database"]["unique_key"]
         # Create a column to show position preferences
         display_cols = [
             unique_key,
@@ -77,8 +77,8 @@ def render_position_rankings_section(filtered_df: pd.DataFrame, role_names: List
         display_cols.extend([col for col in other_cols if col in filtered_by_role.columns])
         
         st.write(f"### Results: {len(filtered_by_role)} applications match filters")
-        st.dataframe(filtered_by_role[display_cols], use_container_width=True, hide_index=True)
-        
+        st.dataframe(filtered_by_role[display_cols], width="stretch", hide_index=True)
+
         # Download button for filtered results
         csv_export = filtered_by_role[display_cols].to_csv(index=False).encode("utf-8")
         st.download_button(
@@ -189,7 +189,7 @@ def render_position_rankings_section(filtered_df: pd.DataFrame, role_names: List
                     
                     display_cols = [col for col in display_cols if col in ranked_df.columns]
                     
-                    st.dataframe(ranked_df[display_cols], use_container_width=True, hide_index=True)
+                    st.dataframe(ranked_df[display_cols], width="stretch", hide_index=True)
                     
                     # Download button
                     csv_export = ranked_df[display_cols].to_csv(index=False).encode("utf-8")

@@ -588,7 +588,7 @@ def render_role_table(df: pd.DataFrame, role: str, cfg: Dict) -> None:
         if status_col in data.columns:
             data = data.sort_values(by=status_col)
     
-    st.dataframe(data[display_cols], use_container_width=True, hide_index=True)
+    st.dataframe(data[display_cols], width="stretch", hide_index=True)
     
     if not data.empty:
         # Add a count of applicants by preference rank
@@ -1071,7 +1071,7 @@ with review_tab:
         else:
             st.dataframe(
                 filtered_df[selected_table_cols],
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
             download_ready = filtered_df[selected_table_cols].to_csv(index=False).encode("utf-8")
@@ -1751,7 +1751,7 @@ with review_tab:
             status_col,
         ])
         conflict_view_cols = [col for col in conflict_view_cols if col in conflict_df.columns]
-        st.dataframe(conflict_df[conflict_view_cols], use_container_width=True, hide_index=True)
+        st.dataframe(conflict_df[conflict_view_cols], width="stretch", hide_index=True)
     else:
         st.caption('No rating or recommendation conflicts detected.')
 
@@ -1797,7 +1797,7 @@ with review_tab:
         display_cols = [col for col in display_cols if col in df.columns]
         if display_cols:
             ordered = df.copy()
-            st.dataframe(ordered[display_cols], use_container_width=True, hide_index=True)
+            st.dataframe(ordered[display_cols], width="stretch", hide_index=True)
         else:
             st.info("No shortlist columns to show.")
     for idx, role in enumerate(ROLE_NAMES, start=1):
@@ -1809,7 +1809,7 @@ with review_tab:
     if audit_df.empty:
         st.caption("No review activity recorded yet.")
     else:
-        st.dataframe(audit_df, use_container_width=True, hide_index=True)
+        st.dataframe(audit_df, width="stretch", hide_index=True)
 
 with position_rankings_tab:
     render_position_rankings_section(filtered_df, ROLE_NAMES, cfg)
@@ -2244,7 +2244,7 @@ with staffing_tab:
         if heatmap_df.empty:
             st.caption("No role assignments yet.")
         else:
-            st.dataframe(heatmap_df, use_container_width=True)
+            st.dataframe(heatmap_df, width="stretch")
 
 
 
