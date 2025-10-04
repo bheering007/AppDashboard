@@ -213,9 +213,13 @@ def prepare_dataframe(df: pd.DataFrame, cfg: Dict) -> pd.DataFrame:
     unique_key = cfg["database"]["unique_key"]
     if unique_key in df.columns:
         df[unique_key] = df[unique_key].astype(str)
-    score_col = cfg["review"]["rubric_score_field"]
-    if score_col in df.columns:
-        df["_fit_numeric"] = pd.to_numeric(df[score_col], errors="coerce")
+    fit_col = cfg["review"].get("rubric_score_field")
+    if fit_col and fit_col in df.columns:
+        df.drop(columns=[fit_col], inplace=True)
+    fit_suffix_cols = [col for col in df.columns if col.endswith("__fit") or col == "fit_score"]
+    for col in fit_suffix_cols:
+        if col in df.columns:
+            df.drop(columns=[col], inplace=True)
     ai_score_col = "ai_score"
     if ai_score_col in df.columns:
         df["_ai_numeric"] = pd.to_numeric(df[ai_score_col], errors="coerce")
@@ -398,15 +402,12 @@ def render_role_table(df: pd.DataFrame, role: str, cfg: Dict) -> None:
         cfg["database"]["unique_key"],
         "First Name",
         "Last Name",
-        f"{role}__fit",
         f"{role}__pref",
         status_col,
         cfg["review"]["notes_field"],
         cfg["review"]["ai_flag_field"],
         "gpa_flag",
     ]
-    if score_col:
-        display_cols.insert(3, score_col)
     display_cols = [col for col in display_cols if col in df.columns]
     if not display_cols:
         st.info("No data available for this role yet.")
@@ -419,9 +420,6 @@ def render_role_table(df: pd.DataFrame, role: str, cfg: Dict) -> None:
     if data.empty:
         st.info("No applicants ranked this role yet.")
         return
-    if f"{role}__fit" in data.columns:
-        data["_role_fit_numeric"] = pd.to_numeric(data[f"{role}__fit"], errors="coerce")
-        data.sort_values("_role_fit_numeric", ascending=False, inplace=True, ignore_index=True)
     st.dataframe(data[display_cols], use_container_width=True, hide_index=True)
     if not data.empty:
         csv_export = data[display_cols].to_csv(index=False).encode("utf-8")
@@ -496,6 +494,7 @@ raw_df = load_dataframe(
     db_token,
 )
 df = prepare_dataframe(raw_df, cfg)
+score_col = None
 score_col = score_col_raw if score_col_raw and score_col_raw in df.columns else None
 pending_mask_all = reviewer_pending_mask(df, reviewer_personal_cols)
 badge_map = badge_columns(df)
@@ -1184,13 +1183,9 @@ with review_tab:
                 role_summaries: list[str] = []
                 for role in ROLE_NAMES:
                     pref_col = f"{role}__pref"
-                    fit_col = f"{role}__fit"
                     pref_value = str(display_row.get(pref_col, "") or "").strip()
-                    fit_value = str(display_row.get(fit_col, "") or "").strip()
-                    if pref_value or fit_value:
-                        pref_label = f"# {pref_value}" if pref_value else "—"
-                        fit_label = fit_value if fit_value else "—"
-                        role_summaries.append(f"{role}: pref {pref_label} · fit {fit_label}")
+                    if pref_value:
+                        role_summaries.append(f"{role}: #{pref_value}")
             if role_summaries:
                 st.caption("Role interest snapshot")
                 for line in role_summaries:
@@ -1542,8 +1537,6 @@ with review_tab:
         display_cols = [col for col in display_cols if col in df.columns]
         if display_cols:
             ordered = df.copy()
-            if "_fit_numeric" in ordered.columns:
-                ordered.sort_values("_fit_numeric", ascending=False, inplace=True, ignore_index=True)
             st.dataframe(ordered[display_cols], use_container_width=True, hide_index=True)
         else:
             st.info("No shortlist columns to show.")

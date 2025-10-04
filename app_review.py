@@ -419,16 +419,13 @@ def prepare_enriched_frame(df: pd.DataFrame, cfg: Dict) -> pd.DataFrame:
                 df[recommend_col] = ""
     rubric_field = cfg["review"]["rubric_score_field"]
     if rubric_field in df.columns:
-        df[rubric_field] = ""
-    else:
-        df[rubric_field] = ""
+        df.drop(columns=[rubric_field], inplace=True)
     ai_flags: List[str] = []
     ai_scores: List[str] = []
     summaries: List[str] = []
     gpa_flags: List[str] = []
     badges_store: Dict[str, List[str]] = {}
     for role in ROLE_NAMES:
-        df[f"{role}__fit"] = ""
         df[f"{role}__pref"] = ""
     for offset, (idx, row) in enumerate(df.iterrows()):
         essays = [str(row.get(col, "")) for col in text_fields]
@@ -505,7 +502,7 @@ def import_csv_to_db(
     interview_resources_base = interview_def["resources_field"]
     interview_summary_base = interview_def["summary_field"]
     for role in ROLE_NAMES:
-        extra_cols.extend([f"{role}__fit", f"{role}__pref"])
+        extra_cols.append(f"{role}__pref")
     for username in reviewers.keys():
         extra_cols.append(f"{notes_base}__{username}")
         if rating_base:
@@ -626,7 +623,6 @@ def import_csv_to_db(
             "gpa_flag",
         ]
         review_fields += badge_cols
-        review_fields += [f"{role}__fit" for role in ROLE_NAMES]
         review_fields += [f"{role}__pref" for role in ROLE_NAMES]
         review_fields += reviewer_note_fields
         review_fields += reviewer_rating_fields
