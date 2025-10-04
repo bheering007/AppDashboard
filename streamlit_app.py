@@ -524,54 +524,6 @@ with st.sidebar:
 
     process_upload(upload)
 
-    st.subheader("Download backups")
-    download_files: List[Path] = []
-    if db_file.exists():
-        db_label = datetime.fromtimestamp(db_file.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
-        st.download_button(
-            "Database (.sqlite)",
-            data=db_file.read_bytes(),
-            file_name=db_file.name,
-            mime="application/octet-stream",
-            key="dl_sqlite_db",
-        )
-        st.caption(f"DB updated {db_label}")
-        download_files.append(db_file)
-    else:
-        st.caption("Database file not found yet. Upload a CSV to initialize it.")
-
-    csv_candidate = Path(csv_write_target)
-    if csv_candidate.exists():
-        csv_label = datetime.fromtimestamp(csv_candidate.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
-        st.download_button(
-            "Master CSV",
-            data=csv_candidate.read_bytes(),
-            file_name=csv_candidate.name,
-            mime="text/csv",
-            key="dl_master_csv",
-        )
-        st.caption(f"CSV updated {csv_label}")
-        download_files.append(csv_candidate)
-
-    archive_bytes = build_zip_from_files(download_files)
-    if archive_bytes:
-        st.download_button(
-            "ZIP backup (DB + CSV)",
-            data=archive_bytes,
-            file_name="nmc_review_backup.zip",
-            mime="application/zip",
-            key="dl_zip_bundle",
-        )
-    snapshot_dir = Path(cfg.get("persistence", {}).get("snapshot_dir", "data_snapshots"))
-    history_dir = snapshot_dir / "history"
-    if history_dir.exists():
-        recent = sorted(history_dir.glob("*"), key=lambda item: item.stat().st_mtime, reverse=True)[:5]
-        if recent:
-            st.caption("Recent history snapshots:")
-            for item in recent:
-                ts = datetime.fromtimestamp(item.stat().st_mtime).strftime("%m-%d %H:%M")
-                st.text(f"{item.name} ({ts})")
-
     st.divider()
     with st.expander("Filter applicants", expanded=False):
         search_col, status_col_ui = st.columns([2, 1])
@@ -606,9 +558,58 @@ with st.sidebar:
             format_func=lambda key: badge_map[key],
         )
 
-if df.empty:
-    st.info("No applications in the database yet. Upload your Formstack CSV using the sidebar to get started.")
-    st.stop()
+    st.divider()
+    with st.expander("Download backups", expanded=False):
+        download_files: List[Path] = []
+        if db_file.exists():
+            db_label = datetime.fromtimestamp(db_file.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+            st.download_button(
+                "Database (.sqlite)",
+                data=db_file.read_bytes(),
+                file_name=db_file.name,
+                mime="application/octet-stream",
+                key="dl_sqlite_db",
+            )
+            st.caption(f"DB updated {db_label}")
+            download_files.append(db_file)
+        else:
+            st.caption("Database file not found yet. Upload a CSV to initialize it.")
+
+        csv_candidate = Path(csv_write_target)
+        if csv_candidate.exists():
+            csv_label = datetime.fromtimestamp(csv_candidate.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+            st.download_button(
+                "Master CSV",
+                data=csv_candidate.read_bytes(),
+                file_name=csv_candidate.name,
+                mime="text/csv",
+                key="dl_master_csv",
+            )
+            st.caption(f"CSV updated {csv_label}")
+            download_files.append(csv_candidate)
+
+        archive_bytes = build_zip_from_files(download_files)
+        if archive_bytes:
+            st.download_button(
+                "ZIP backup (DB + CSV)",
+                data=archive_bytes,
+                file_name="nmc_review_backup.zip",
+                mime="application/zip",
+                key="dl_zip_bundle",
+            )
+        snapshot_dir = Path(cfg.get("persistence", {}).get("snapshot_dir", "data_snapshots"))
+        history_dir = snapshot_dir / "history"
+        if history_dir.exists():
+            recent = sorted(history_dir.glob("*"), key=lambda item: item.stat().st_mtime, reverse=True)[:5]
+            if recent:
+                st.caption("Recent history snapshots:")
+                for item in recent:
+                    ts = datetime.fromtimestamp(item.stat().st_mtime).strftime("%m-%d %H:%M")
+                    st.text(f"{item.name} ({ts})")
+
+    if df.empty:
+        st.info("No applications in the database yet. Upload your Formstack CSV using the sidebar to get started.")
+        st.stop()
 
 filtered_df = filtered_dataframe(
     df=df,

@@ -191,5 +191,5 @@ persistence:
   enabled: true
   snapshot_dir: data_snapshots
   keep_history: true
-  auto_git_commit: true
+  auto_git_commit: false
   commit_message: "chore: snapshot review data"
