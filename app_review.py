@@ -146,6 +146,16 @@ def _normalize_value(value) -> Optional[str]:
     return str(value)
 
 
+def _is_empty_value(value) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, float) and pd.isna(value):  # type: ignore[arg-type]
+        return True
+    if isinstance(value, str) and value.strip() == "":
+        return True
+    return False
+
+
 def upsert_rows(db_path: str, table: str, df: pd.DataFrame, unique_key: str) -> None:
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
@@ -497,6 +507,73 @@ def import_csv_to_db(
             extra_cols.append(f"{base}__{username}")
     extra_cols.extend(badge_cols)
     extra_cols = list(dict.fromkeys(extra_cols))
+
+    reviewer_note_fields = [f"{notes_base}__{username}" for username in reviewers.keys()]
+    reviewer_rating_fields = [f"{rating_base}__{username}" for username in reviewers.keys()] if rating_base else []
+    reviewer_recommend_fields = [f"{recommend_base}__{username}" for username in reviewers.keys()] if recommend_base else []
+    interview_prompt_fields = [f"{base}__{username}" for base in interview_prompt_bases for username in reviewers.keys()]
+    interview_rating_fields = [f"{interview_rating_base}__{username}" for username in reviewers.keys()]
+    interview_outcome_fields = [f"{interview_outcome_base}__{username}" for username in reviewers.keys()]
+    interview_log_fields = [f"{interview_log_base}__{username}" for username in reviewers.keys()]
+    interview_resource_fields = [f"{interview_resources_base}__{username}" for username in reviewers.keys()]
+    interview_summary_fields = [f"{interview_summary_base}__{username}" for username in reviewers.keys()]
+    interview_question_fields = [f"{base}__{username}" for base in interview_question_bases for username in reviewers.keys()]
+
+    preserve_columns: set[str] = {
+        cfg["review"]["status_field"],
+        cfg["review"]["notes_field"],
+    }
+    if rating_base:
+        preserve_columns.add(rating_base)
+    if recommend_base:
+        preserve_columns.add(recommend_base)
+    preserve_columns.update(reviewer_note_fields)
+    preserve_columns.update(reviewer_rating_fields)
+    preserve_columns.update(reviewer_recommend_fields)
+    preserve_columns.update(interview_prompt_fields)
+    preserve_columns.update(interview_rating_fields)
+    preserve_columns.update(interview_outcome_fields)
+    preserve_columns.update(interview_log_fields)
+    preserve_columns.update(interview_resource_fields)
+    preserve_columns.update(interview_summary_fields)
+    preserve_columns.update(interview_question_fields)
+
+    if Path(db_path).exists():
+        key_values = (
+            enriched_df[unique_key]
+            .astype(str)
+            .dropna()
+            .unique()
+            .tolist()
+        )
+        if key_values:
+            placeholders = ",".join(["?"] * len(key_values))
+            with sqlite3.connect(db_path) as conn:
+                existing_df = pd.read_sql_query(
+                    f'SELECT * FROM "{table}" WHERE "{unique_key}" IN ({placeholders})',
+                    conn,
+                    params=key_values,
+                )
+            if not existing_df.empty:
+                existing_df[unique_key] = existing_df[unique_key].astype(str)
+                enriched_df[unique_key] = enriched_df[unique_key].astype(str)
+                existing_indexed = existing_df.set_index(unique_key)
+                enriched_indexed = enriched_df.set_index(unique_key)
+                overlap = enriched_indexed.index.intersection(existing_indexed.index)
+                if not overlap.empty:
+                    for column in preserve_columns:
+                        if column not in enriched_indexed.columns or column not in existing_indexed.columns:
+                            continue
+                        new_values = enriched_indexed.loc[overlap, column]
+                        existing_values = existing_indexed.loc[overlap, column]
+                        mask = new_values.apply(_is_empty_value)
+                        if mask.any():
+                            indices_to_fill = mask[mask].index
+                            enriched_indexed.loc[indices_to_fill, column] = existing_values.loc[
+                                indices_to_fill
+                            ]
+                enriched_df = enriched_indexed.reset_index()
+
     if not Path(db_path).exists():
         init_db(db_path, table, list(enriched_df.columns) + extra_cols, unique_key)
     ensure_columns(db_path, table, list(enriched_df.columns) + extra_cols)
@@ -506,16 +583,6 @@ def import_csv_to_db(
         if target_path != csv_path_obj and not target_path.exists():
             target_path.parent.mkdir(parents=True, exist_ok=True)
             target_path.write_bytes(csv_path_obj.read_bytes())
-        reviewer_note_fields = [f"{notes_base}__{username}" for username in reviewers.keys()]
-        reviewer_rating_fields = [f"{rating_base}__{username}" for username in reviewers.keys()] if rating_base else []
-        reviewer_recommend_fields = [f"{recommend_base}__{username}" for username in reviewers.keys()] if recommend_base else []
-        interview_prompt_fields = [f"{base}__{username}" for base in interview_prompt_bases for username in reviewers.keys()]
-        interview_rating_fields = [f"{interview_rating_base}__{username}" for username in reviewers.keys()]
-        interview_outcome_fields = [f"{interview_outcome_base}__{username}" for username in reviewers.keys()]
-        interview_log_fields = [f"{interview_log_base}__{username}" for username in reviewers.keys()]
-        interview_resource_fields = [f"{interview_resources_base}__{username}" for username in reviewers.keys()]
-        interview_summary_fields = [f"{interview_summary_base}__{username}" for username in reviewers.keys()]
-        interview_question_fields = [f"{base}__{username}" for base in interview_question_bases for username in reviewers.keys()]
         review_fields = [
             cfg["review"]["status_field"],
             cfg["review"]["notes_field"],
@@ -541,6 +608,7 @@ def import_csv_to_db(
         review_fields += interview_summary_fields
         review_fields += interview_question_fields
         review_fields = list(dict.fromkeys(review_fields))
+
         merge_with_master_csv(
             csv_path=str(target_path),
             skiprows=skiprows,
