@@ -81,7 +81,7 @@ def get_interview_definition(cfg: Dict) -> Dict[str, Dict]:
     resources_field = interview_cfg.get("resources_field", DEFAULT_INTERVIEW_RESOURCES_FIELD)
     summary_field = interview_cfg.get("summary_field", DEFAULT_INTERVIEW_SUMMARY_FIELD)
     raw_outcomes = interview_cfg.get("outcome_options", DEFAULT_INTERVIEW_OUTCOMES)
-    cleaned = []
+    cleaned: List[str] = []
     for item in raw_outcomes:
         label = str(item).strip().lower()
         if not label:
@@ -89,11 +89,10 @@ def get_interview_definition(cfg: Dict) -> Dict[str, Dict]:
         canonical = OUTCOME_SYNONYMS.get(label, label)
         if canonical not in cleaned:
             cleaned.append(canonical)
-    ordered = [option for option in DEFAULT_INTERVIEW_OUTCOMES if option in cleaned]
+    outcome_options: List[str] = DEFAULT_INTERVIEW_OUTCOMES.copy()
     for option in cleaned:
-        if option not in ordered:
-            ordered.append(option)
-    outcome_options = ordered or DEFAULT_INTERVIEW_OUTCOMES
+        if option not in outcome_options:
+            outcome_options.append(option)
     summary_template = interview_cfg.get("summary_template", [])
     questions_cfg = interview_cfg.get("question_checklist", []) or []
     question_items = []
