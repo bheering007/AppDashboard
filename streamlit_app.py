@@ -743,7 +743,7 @@ else:
                 st.session_state["data_version"] += 1
                 load_dataframe.clear()
                 if toast_message:
-                    st.toast(toast_message, icon="??")
+                    st.toast(toast_message, icon="💾")
 
             def save_rating() -> None:
                 value = float(st.session_state.get("review_rating_value", 0.0))
