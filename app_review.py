@@ -30,7 +30,7 @@ DEFAULT_INTERVIEW_PROMPTS = {
     "growth": "Growth Opportunities",
     "followups": "Follow-up Items",
 }
-DEFAULT_INTERVIEW_OUTCOMES = ["strong yes", "yes", "hold", "no"]
+DEFAULT_INTERVIEW_OUTCOMES = ["strong yes", "yes", "maybe", "no", "strong no"]
 DEFAULT_INTERVIEW_RATING_FIELD = "interview_rating"
 DEFAULT_INTERVIEW_OUTCOME_FIELD = "interview_outcome"
 DEFAULT_INTERVIEW_LOG_FIELD = "interview_log"
@@ -74,7 +74,8 @@ def get_interview_definition(cfg: Dict) -> Dict[str, Dict]:
     log_field = interview_cfg.get("log_field", DEFAULT_INTERVIEW_LOG_FIELD)
     resources_field = interview_cfg.get("resources_field", DEFAULT_INTERVIEW_RESOURCES_FIELD)
     summary_field = interview_cfg.get("summary_field", DEFAULT_INTERVIEW_SUMMARY_FIELD)
-    outcome_options = interview_cfg.get("outcome_options", DEFAULT_INTERVIEW_OUTCOMES)
+    raw_outcomes = interview_cfg.get("outcome_options", DEFAULT_INTERVIEW_OUTCOMES)
+    outcome_options = [str(item).strip() for item in raw_outcomes if str(item).strip()]
     summary_template = interview_cfg.get("summary_template", [])
     questions_cfg = interview_cfg.get("question_checklist", []) or []
     question_items = []

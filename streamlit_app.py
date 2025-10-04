@@ -22,6 +22,11 @@ from app_review import (
 st.set_page_config(page_title="NMC Applications", layout="wide")
 
 BADGE_PREFIX = "badge__"
+LEGACY_OUTCOME_MAP = {
+    "true": "yes",
+    "hold": "maybe",
+    "false": "no",
+}
 
 
 
@@ -766,7 +771,8 @@ else:
             outcome_raw = selected_row.get(user_interview_outcome_col, "")
             if pd.isna(outcome_raw):
                 outcome_raw = ""
-            interview_outcome_value = str(outcome_raw).strip().lower()
+            normalized_outcome = str(outcome_raw).strip().lower()
+            interview_outcome_value = LEGACY_OUTCOME_MAP.get(normalized_outcome, normalized_outcome)
         interview_resources_value = ""
         if user_interview_resources_col:
             resources_raw = selected_row.get(user_interview_resources_col, "")
@@ -929,7 +935,9 @@ else:
         def save_interview_outcome() -> None:
             if not user_interview_outcome_col:
                 return
-            value = st.session_state.get("interview_outcome_value", "")
+            value = str(st.session_state.get("interview_outcome_value", "")).strip().lower()
+            value = LEGACY_OUTCOME_MAP.get(value, value)
+            st.session_state["interview_outcome_value"] = value
             persist_updates({user_interview_outcome_col: value}, "Interview outcome saved")
 
         def save_interview_resources() -> None:
@@ -987,7 +995,11 @@ else:
         if user_interview_rating_col:
             display_row[user_interview_rating_col] = st.session_state.get("interview_rating_display", display_row.get(user_interview_rating_col, ""))
         if user_interview_outcome_col:
-            display_row[user_interview_outcome_col] = st.session_state.get("interview_outcome_value", display_row.get(user_interview_outcome_col, ""))
+            outcome_state = str(
+                st.session_state.get("interview_outcome_value", display_row.get(user_interview_outcome_col, ""))
+            ).strip().lower()
+            outcome_state = LEGACY_OUTCOME_MAP.get(outcome_state, outcome_state)
+            display_row[user_interview_outcome_col] = outcome_state
         if user_interview_log_col:
             display_row[user_interview_log_col] = st.session_state.get("interview_log_value", display_row.get(user_interview_log_col, ""))
         if user_interview_resources_col:
@@ -1165,9 +1177,10 @@ else:
                         on_change=save_interview_rating,
                         help="Score the interview itself. Autosaves on release.",
                     )
-                outcome_options = [""] + [opt for opt in interview_outcome_options if opt]
+                outcome_options = [""] + [str(opt).strip() for opt in interview_outcome_options if str(opt).strip()]
                 if user_interview_outcome_col and outcome_options:
-                    current_outcome = st.session_state.get("interview_outcome_value", "")
+                    current_outcome = str(st.session_state.get("interview_outcome_value", "")).strip().lower()
+                    current_outcome = LEGACY_OUTCOME_MAP.get(current_outcome, current_outcome)
                     if current_outcome not in outcome_options:
                         current_outcome = ""
                         st.session_state["interview_outcome_value"] = current_outcome
