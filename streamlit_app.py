@@ -1820,13 +1820,15 @@ with staffing_tab:
         df[family_field] = ""
     else:
         df[family_field] = df[family_field].apply(normalize_family)
+    if family_pair_field and family_pair_field not in df.columns:
+        df[family_pair_field] = ""
     family_subset = df[df[status_col].astype(str).str.lower().isin(final_statuses)].copy()
 
     st.subheader("Family Assignment Board")
     if family_subset.empty:
         st.caption("Once applicants are marked yes/strong yes they will appear here for family grouping.")
     else:
-        family_board = family_subset[[
+        family_columns = [
             unique_key,
             "First Name",
             "Last Name",
@@ -1834,8 +1836,10 @@ with staffing_tab:
             score_col,
             assignment_field,
             family_field,
-            family_pair_field,
-        ]].copy()
+        ]
+        if family_pair_field and family_pair_field in family_subset.columns:
+            family_columns.append(family_pair_field)
+        family_board = family_subset[family_columns].copy()
         family_board.rename(columns={
             "First Name": "First",
             "Last Name": "Last",
@@ -1843,12 +1847,15 @@ with staffing_tab:
             score_col: "Fit score",
             assignment_field: "Assigned role",
             family_field: "Family",
-            family_pair_field: "Family pod",
+            **({family_pair_field: "Family pod"} if family_pair_field and family_pair_field in family_columns else {}),
         }, inplace=True)
         family_board["Candidate"] = family_board["First"].fillna("") + " " + family_board["Last"].fillna("")
         family_board.drop(columns=["First", "Last"], inplace=True)
         family_board["Family"] = family_board["Family"].apply(normalize_family)
-        family_board["Family pod"] = family_board["Family pod"].apply(lambda v: str(v or "").strip())
+        if "Family pod" in family_board.columns:
+            family_board["Family pod"] = family_board["Family pod"].apply(lambda v: str(v or "").strip())
+        else:
+            family_board["Family pod"] = ""
         family_board = family_board[[unique_key, "Candidate", "Status", "Fit score", "Assigned role", "Family", "Family pod"]]
         family_board.set_index(unique_key, inplace=True)
 
