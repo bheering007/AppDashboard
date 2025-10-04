@@ -689,11 +689,7 @@ else:
             )
             gpa_flag = selected_row.get("gpa_flag", "")
             if gpa_flag:
-            st.error("GPA flagged below threshold", icon="⚠️")
-            render_badges(selected_row, badge_map)
-            st.write("**Summary**")
-            st.write(selected_row.get("summary", ""))
-        with info_cols[1]:
+                st.error("GPA flagged below threshold", icon="⚠️")
             allowed_statuses = [""] + cfg["review"].get("allowed_statuses", [])
             question_status_options = ["", "asked", "needs follow-up"]
             question_status_labels = {
@@ -747,11 +743,9 @@ else:
                 st.session_state["data_version"] += 1
                 load_dataframe.clear()
                 if toast_message:
-                st.toast(toast_message, icon="💾")
+                    st.toast(toast_message, icon="??")
 
             def save_rating() -> None:
-                if not user_rating_col:
-                    return
                 value = float(st.session_state.get("review_rating_value", 0.0))
                 value = max(0.0, min(5.0, value))
                 formatted = f"{value:.1f}"
