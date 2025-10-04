@@ -689,7 +689,7 @@ else:
             )
             gpa_flag = selected_row.get("gpa_flag", "")
             if gpa_flag:
-                st.error("GPA flagged below threshold", icon="??")
+                st.error("GPA flagged below threshold", icon="!")
             render_badges(selected_row, badge_map)
             st.write("**Summary**")
             st.write(selected_row.get("summary", ""))
@@ -747,7 +747,7 @@ else:
                 st.session_state["data_version"] += 1
                 load_dataframe.clear()
                 if toast_message:
-                    st.toast(toast_message, icon="??")
+                    st.toast(toast_message, icon="!")
 
             def save_rating() -> None:
                 if not user_rating_col:
@@ -901,7 +901,7 @@ else:
                         st.session_state["interview_summary_value"] = template_text
                         st.session_state["review_notes_value"] = template_text
                         st.session_state["review_snapshot"] = current_snapshot()
-                        st.toast("Template added to notes", icon="??")
+                        st.toast("Template added to notes", icon="!")
                 st.text_area(
                     "Interview summary",
                     key="interview_summary_value",
