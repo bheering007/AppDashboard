@@ -441,7 +441,6 @@ def prepare_enriched_frame(df: pd.DataFrame, cfg: Dict) -> pd.DataFrame:
     recommend_base = cfg["review"].get("recommendation_field")
     assignment_field = cfg["review"].get("assignment_field", "role_assignment")
     family_field = cfg["review"].get("family_field", "family_group")
-    family_field = cfg["review"].get("family_field", "family_group")
     if recommend_base and recommend_base not in df.columns:
         df[recommend_base] = ""
     for username in reviewers.keys():
@@ -529,6 +528,7 @@ def import_csv_to_db(
     rating_base = cfg["review"].get("rating_field")
     recommend_base = cfg["review"].get("recommendation_field")
     assignment_field = cfg["review"].get("assignment_field", "role_assignment")
+    family_field = cfg["review"].get("family_field", "family_group")
     interview_def = get_interview_definition(cfg)
     interview_prompt_bases = [item["column"] for item in interview_def["prompts"]]
     interview_question_bases = [item["column"] for item in interview_def["questions"]]
@@ -557,6 +557,8 @@ def import_csv_to_db(
     extra_cols.extend(badge_cols)
     if assignment_field:
         extra_cols.append(assignment_field)
+    if family_field:
+        extra_cols.append(family_field)
     if family_field:
         extra_cols.append(family_field)
     extra_cols = list(dict.fromkeys(extra_cols))
