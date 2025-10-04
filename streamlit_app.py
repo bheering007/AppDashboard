@@ -526,25 +526,22 @@ with st.sidebar:
 
     st.divider()
     with st.expander("Filter applicants", expanded=False):
-        search_col, status_col_ui = st.columns([2, 1])
-        with search_col:
-            search_text = st.text_input(
-                "Search name/email/notes",
-                help="Matches across names, contact info, shared notes, and your comments.",
-            )
-            pending_only = st.checkbox(
-                "Only show my pending reviews",
-                key="pending_only_filter",
-                help="Show applications where you have not saved notes, rating, or recommendation yet.",
-            )
-        with status_col_ui:
-            status_filter = st.multiselect(
-                "Review status",
-                options=cfg["review"].get("allowed_statuses", ["yes", "maybe", "no"]),
-                help="Leave empty to include every decision.",
-            )
-            ai_filter = st.selectbox("AI flag", options=["All", "Flagged", "Not flagged"], index=0)
-        score_cols = st.columns(2)
+        search_text = st.text_input(
+            "Search name/email/notes",
+            help="Matches across names, contact info, shared notes, and your comments.",
+        )
+        pending_only = st.checkbox(
+            "Only show my pending reviews",
+            key="pending_only_filter",
+            help="Show applications where you have not saved notes, rating, or recommendation yet.",
+        )
+        status_filter = st.multiselect(
+            "Review status",
+            options=cfg["review"].get("allowed_statuses", ["yes", "maybe", "no"]),
+            help="Leave empty to include every decision.",
+        )
+        ai_filter = st.selectbox("AI flag", options=["All", "Flagged", "Not flagged"], index=0)
+        score_cols = st.columns([1, 1], gap="small")
         with score_cols[0]:
             gpa_only = st.checkbox("Only show GPA flag (<3.0)", value=False)
             min_fit = st.slider("Minimum fit score", -2.0, 6.0, 0.0, 0.1)
