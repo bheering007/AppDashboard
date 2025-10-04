@@ -1,4 +1,6 @@
+import shutil
 import sqlite3
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List
@@ -19,6 +21,81 @@ st.set_page_config(page_title="NMC Applications", layout="wide")
 
 BADGE_PREFIX = "badge__"
 
+
+
+def snapshot_review_data(cfg: Dict, event: str = "update") -> None:
+    persistence_cfg = cfg.get("persistence") or {}
+    if not persistence_cfg.get("enabled", True):
+        return
+    snapshot_dir = Path(persistence_cfg.get("snapshot_dir", "data_snapshots")).resolve()
+    try:
+        snapshot_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as exc:
+        st.warning(f"Snapshot folder error: {exc}")
+        return
+    keep_history = persistence_cfg.get("keep_history", True)
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    resources: List[tuple[Path, Path]] = []
+    db_path = Path(cfg.get("database", {}).get("path", ""))
+    if db_path.exists():
+        resources.append((db_path, snapshot_dir / db_path.name))
+    csv_cfg = cfg.get("csv", {})
+    csv_candidate = csv_cfg.get("write_back_path") or csv_cfg.get("path")
+    csv_path = Path(csv_candidate) if csv_candidate else None
+    if csv_path and csv_path.exists():
+        resources.append((csv_path, snapshot_dir / csv_path.name))
+    history_paths: List[Path] = []
+    for src, dest in resources:
+        try:
+            shutil.copy2(src, dest)
+        except Exception as exc:
+            st.warning(f"Snapshot copy failed for {src.name}: {exc}")
+            continue
+        if keep_history:
+            history_dir = snapshot_dir / "history"
+            try:
+                history_dir.mkdir(parents=True, exist_ok=True)
+                hist_suffix = f"{timestamp}-{event}-{src.name}" if event else f"{timestamp}-{src.name}"
+                hist_dest = history_dir / hist_suffix
+                shutil.copy2(src, hist_dest)
+                history_paths.append(hist_dest)
+            except Exception as exc:
+                st.warning(f"History snapshot failed for {src.name}: {exc}")
+    if not resources:
+        return
+    if not persistence_cfg.get("auto_git_commit"):
+        return
+    try:
+        repo_root = Path(persistence_cfg.get("repo_root", ".")).resolve()
+        tracked_paths = {dest.resolve() for _, dest in resources if dest.exists()}
+        tracked_paths.update(path.resolve() for path in history_paths if path.exists())
+        git_paths = []
+        for path in tracked_paths:
+            if path.is_relative_to(repo_root):
+                git_paths.append(str(path.relative_to(repo_root)))
+            else:
+                git_paths.append(str(path))
+        if not git_paths:
+            return
+        subprocess.run(["git", "add", *git_paths], cwd=repo_root, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        diff_proc = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=repo_root)
+        if diff_proc.returncode == 0:
+            subprocess.run(["git", "reset", "--", *git_paths], cwd=repo_root, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return
+        if diff_proc.returncode not in {0, 1}:
+            raise RuntimeError("git diff --cached failed")
+        message = persistence_cfg.get("commit_message") or f"chore: snapshot review data ({timestamp})"
+        commit_proc = subprocess.run(
+            ["git", "commit", "-m", message],
+            cwd=repo_root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if commit_proc.returncode != 0:
+            raise RuntimeError(commit_proc.stderr.strip() or commit_proc.stdout.strip() or "git commit failed")
+    except Exception as exc:
+        st.warning(f"Git snapshot failed: {exc}")
 
 
 def setup_autorefresh(seconds: float | int) -> None:
@@ -424,6 +501,7 @@ with st.sidebar:
             write_back_csv=cfg["csv"].get("write_back", True),
             write_back_target=csv_write_target,
         )
+        snapshot_review_data(cfg, event="import")
         st.session_state["last_uploaded_token"] = token
         st.session_state["upload_message"] = f"Imported {len(enriched)} rows from {file.name}."
         st.session_state["data_version"] += 1
@@ -747,6 +825,7 @@ else:
                 skiprows=cfg["csv"].get("skiprows", 0),
                 actor=current_user,
             )
+            snapshot_review_data(cfg, event="review-update")
             st.session_state["review_snapshot"] = current_snapshot()
             st.session_state["data_version"] += 1
             load_dataframe.clear()

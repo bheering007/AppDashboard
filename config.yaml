@@ -187,3 +187,9 @@ ui:
 analytics:
   conflict_rating_threshold: 2.0
   conflict_recommendation: true
+persistence:
+  enabled: true
+  snapshot_dir: data_snapshots
+  keep_history: true
+  auto_git_commit: true
+  commit_message: "chore: snapshot review data"
