@@ -447,16 +447,6 @@ assignment_field = cfg["review"].get("assignment_field", "role_assignment")
 family_field = cfg["review"].get("family_field", "family_group")
 family_cfg = cfg.get("family", {}) or {}
 family_names = family_cfg.get("names") or []
-if not family_names and family_field in df.columns:
-    family_names = sorted(
-        {
-            value.strip()
-            for value in df[family_field].astype(str).tolist()
-            if value and value.strip()
-        }
-    )
-if not family_names:
-    family_names = ["Family 1", "Family 2", "Family 3", "Family 4", "Family 5"]
 interview_def = get_interview_definition(cfg)
 interview_prompts = interview_def.get("prompts", [])
 interview_prompt_cols = {item["slug"]: f"{item['column']}__{current_user}" for item in interview_prompts}
@@ -689,6 +679,18 @@ if pending_only_active and not filtered_df.empty:
     filtered_df = filtered_df[reviewer_pending_mask(filtered_df, reviewer_personal_cols)]
 
 unique_key = cfg["database"]["unique_key"]
+
+if not family_names:
+    if family_field in df.columns:
+        family_names = sorted(
+            {
+                value.strip()
+                for value in df[family_field].astype(str).tolist()
+                if value and value.strip()
+            }
+        )
+    if not family_names:
+        family_names = ["Family 1", "Family 2", "Family 3", "Family 4", "Family 5"]
 
 col_metrics = st.columns(5)
 with col_metrics[0]:

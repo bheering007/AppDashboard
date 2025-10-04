@@ -38,11 +38,12 @@ review:
   family_field: family_group
 family:
   names:
-    - Family 1
-    - Family 2
-    - Family 3
-    - Family 4
-    - Family 5
+    - Rev
+    - Tonk
+    - Collegian
+    - Ptolomy
+    - Cadets
+    - Maroons
 rubric:
   weights:
     experience_bonus: 1.0
