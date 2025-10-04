@@ -440,7 +440,6 @@ notes_col = cfg["review"]["notes_field"]
 status_col = cfg["review"]["status_field"]
 ai_col = cfg["review"]["ai_flag_field"]
 score_col_raw = cfg["review"].get("rubric_score_field")
-score_col = score_col_raw if score_col_raw and score_col_raw in df.columns else None
 rating_base = cfg["review"].get("rating_field", "review_score")
 recommend_base = cfg["review"].get("recommendation_field", "review_recommendation")
 assignment_field = cfg["review"].get("assignment_field", "role_assignment")
@@ -497,6 +496,7 @@ raw_df = load_dataframe(
     db_token,
 )
 df = prepare_dataframe(raw_df, cfg)
+score_col = score_col_raw if score_col_raw and score_col_raw in df.columns else None
 pending_mask_all = reviewer_pending_mask(df, reviewer_personal_cols)
 badge_map = badge_columns(df)
 
