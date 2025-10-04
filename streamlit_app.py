@@ -1968,5 +1968,4 @@ with staffing_tab:
         if heatmap_df.empty:
             st.caption("No role assignments yet.")
         else:
-            styled_heat = heatmap_df.style.background_gradient(cmap="Blues")
-            st.dataframe(styled_heat, use_container_width=True)
+            st.dataframe(heatmap_df, use_container_width=True)
